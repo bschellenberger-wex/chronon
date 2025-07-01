@@ -1,0 +1,7 @@
+-r base.in
+tox
+pytest-cov
+black
+pre-commit
+isort
+autoflake

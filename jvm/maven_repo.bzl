@@ -1,0 +1,96 @@
+load("@rules_jvm_external//:specs.bzl", "maven")
+load(":defs.bzl", "repo", "versioned_artifacts")
+load("//tools/build_rules:utils.bzl", "expand_versions")
+
+maven_repo = repo(
+    name = "maven",
+    pinned = False,
+    artifacts = [
+        expand_versions("org.scala-lang.modules:scala-collection-compat_{version}:2.6.0", versions = ["2.11", "2.12", "2.13"]),
+        "org.scala-lang.modules:scala-parser-combinators_2.13:2.4.0",
+        expand_versions("org.scala-lang.modules:scala-java8-compat_{version}:1.0.0", versions = ["2.11", "2.12", "2.13"]),
+        "org.apache.thrift:libthrift:0.13.0",
+        "org.scala-lang.modules:scala-parallel-collections_2.13:1.0.4",
+        "org.apache.commons:commons-lang3:3.12.0",
+        "org.apache.commons:commons-math3:3.6.1",
+        versioned_artifacts("1.2.3", [
+            "ch.qos.logback:logback-classic",
+            "ch.qos.logback:logback-core",
+        ]),
+        "ch.qos.reload4j:reload4j:1.2.19",
+
+        # JUnit
+        "junit:junit:4.13.2",
+        "com.novocode:junit-interface:0.11",
+        expand_versions("org.scalatestplus:mockito-3-4_{version}:3.2.10.0", versions = ["2.11", "2.12", "2.13"]),
+        "org.mockito:mockito-core:4.6.1",
+        expand_versions("org.mockito:mockito-scala_{version}:1.17.0", versions = ["2.11", "2.12", "2.13"]),
+        expand_versions("org.scalatest:scalatest_{version}:3.2.15", versions = ["2.11", "2.12", "2.13"]),
+        expand_versions("org.scalatest:scalatest-shouldmatchers_{version}:3.2.15", versions = ["2.11", "2.12", "2.13"]),
+        expand_versions("org.scalatest:scalatest-matchers-core_{version}:3.2.15", versions = ["2.11", "2.12", "2.13"]),
+        expand_versions("org.scalactic:scalactic_{version}:3.2.15", versions = ["2.11", "2.12", "2.13"]),
+        # Add other dependencies
+        "org.apache.hadoop:hadoop-common:3.3.1",
+        "com.typesafe.akka:akka-actor_2.12:2.6.18",
+        "com.typesafe.akka:akka-stream_2.12:2.6.18",
+        "org.slf4j:slf4j-api:1.7.30",
+        "org.slf4j:slf4j-log4j12:1.7.30",
+        "org.apache.logging.log4j:log4j-core:2.14.1",
+        "org.apache.logging.log4j:log4j-api:2.14.1",
+        "com.fasterxml.jackson.core:jackson-core:2.12.5",
+        "com.fasterxml.jackson.core:jackson-annotations:2.12.5",
+        "com.fasterxml.jackson.core:jackson-databind:2.12.5",
+        expand_versions("com.fasterxml.jackson.module:jackson-module-scala_{version}:2.12.5", versions = ["2.11", "2.12", "2.13"]),
+        "org.apache.httpcomponents:httpclient:4.5.13",
+        "org.apache.httpcomponents:httpcore:4.4.14",
+        "com.google.guava:guava:30.1-jre",
+        "org.xerial:sqlite-jdbc:3.34.0",
+        "com.yahoo.datasketches:sketches-core:0.13.4",
+        "com.google.code.gson:gson:2.8.6",
+        "commons-lang:commons-lang:2.6",
+        "commons-io:commons-io:2.11.0",
+        "com.github.ben-manes.caffeine:caffeine:2.8.5",
+        "net.jodah:typetools:0.4.1",
+        expand_versions("org.rogach:scallop_{version}:4.0.1", versions = ["2.11", "2.12", "2.13"]),
+        expand_versions("org.json4s:json4s-jackson_{version}:3.6.12", versions = ["2.11", "2.12", "2.13"]),
+        expand_versions("org.json4s:json4s-core_{version}:3.6.12", versions = ["2.11", "2.12", "2.13"]),
+        expand_versions("org.json4s:json4s-native_{version}:3.6.12", versions = ["2.11", "2.12", "2.13"]),
+        expand_versions("org.json4s:json4s-ast_{version}:3.6.12", versions = ["2.11", "2.12", "2.13"]),
+        "com.datadoghq:java-dogstatsd-client:2.7",
+        "com.esotericsoftware:kryo:5.6.2",
+        expand_versions("io.delta:delta-core_{version}:2.0.2", versions = ["2.12", "2.13"]),
+        "io.delta:delta-core_2.11:0.6.1",
+        "com.github.jnr:jnr-ffi:2.2.10",
+        "org.apache.kafka:kafka-clients:3.7.1",
+        "org.codehaus.janino:janino:3.0.9",
+        "org.codehaus.janino:commons-compiler:3.0.9",
+        "org.codehaus.jackson:jackson-core-asl:1.9.13",
+
+        # Vertx dependencies
+        "io.vertx:vertx-core:4.5.10",
+        "io.vertx:vertx-web:4.5.10",
+        "io.vertx:vertx-config:4.5.10",
+        "io.vertx:vertx-codegen:4.5.10",
+        "io.vertx:vertx-unit:4.5.10",
+        "io.vertx:vertx-micrometer-metrics:4.5.10",
+        "io.micrometer:micrometer-core:1.12.4",
+        "io.micrometer:micrometer-registry-statsd:1.12.4",
+
+        # Proto
+        "com.google.protobuf:protobuf-java:3.21.7",
+
+        # MongoDB Scala Driver and dependencies
+        "org.mongodb.scala:mongo-scala-driver_2.12:4.11.1",
+        "org.mongodb.scala:mongo-scala-bson_2.12:4.11.1",
+        "org.mongodb:mongodb-driver-core:4.11.1",
+        "org.mongodb:bson:4.11.1",
+        "org.mongodb:mongodb-driver-sync:4.11.1",
+        "org.mongodb:mongodb-driver-reactivestreams:4.11.1",
+        "org.reactivestreams:reactive-streams:1.0.4",
+        "org.mongodb:mongodb-driver-reactivestreams:4.11.1",
+        "org.reactivestreams:reactive-streams:1.0.4",
+        "io.dropwizard.metrics:metrics-core:4.2.20",
+    ],
+    overrides = {
+    },
+)
