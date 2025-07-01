@@ -1,17 +1,71 @@
-# Byte-compiled / optimized / DLL files
+# ###################################################################
+# ### IDE & Editor Configuration
+# ###################################################################
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+.idea_modules/
+# This covers .run/*.run.xml files
+.run/
+
+# Visual Studio Code
+.vscode/
+
+# Eclipse
+.eclipse
+.project
+
+# Scala & Metals
+.bloop/
+.metals/
+metals.sbt
+
+# ###################################################################
+# ### Build Tools & Artifacts
+# ###################################################################
+# Maven / SBT
+target/
+*.jar
+*.war
+*.ear
+*.class
+
+# Bazel
+bazel-*
+
+# Python
+build/
+dist/
+eggs/
+sdist/
+*.egg-info/
+*.egg
+.venv/
+
+# ###################################################################
+# ### Language & Framework Cache
+# ###################################################################
+# Java / Scala
+.bsp/
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 
-# OSX useful to ignore
-*.DS_Store
+# Spark
+spark-warehouse/
+metastore_db/
+
+# ###################################################################
+# ### OS-specific & Temporary Files
+# ###################################################################
+# macOS
+.DS_Store
 .AppleDouble
 .LSOverride
-
-# Thumbnails
 ._*
-
-# Files that might appear in the root of a volume
 .DocumentRevisions-V100
 .fseventsd
 .Spotlight-V100
@@ -19,22 +73,38 @@ __pycache__/
 .Trashes
 .VolumeIcon.icns
 .com.apple.timemachine.donotpresent
-
-# Directories potentially created on remote AFP share
+# Optional AFP files
 .AppleDB
 .AppleDesktop
 Network Trash Folder
 Temporary Items
 .apdisk
 
-# IntelliJ Idea family of suites
-.idea
-*.iml
-## File-based project format:
-*.ipr
-*.iws
-## mpeltonen/sbt-idea plugin
-.idea_modules/
+# ###################################################################
+# ### Logs, Reports, & Runtime Data
+# ###################################################################
+*.log
+*.logs
+derby.log
 
-# IDE settings
-.vscode/
+# Coverage reports
+.coverage
+htmlcov/
+
+# ###################################################################
+# ### Project-Specific & Generated Files
+# ###################################################################
+# These paths seem specific to generated code or data
+api/py/ai/chronon/api/
+api/py/ai/chronon/thrift/
+api/py/test/sample/production/group_bys/quickstart/
+api/py/test/sample/production/joins/quickstart/
+
+# Documentation builds
+docs/build/
+
+# Release artifacts
+releases/
+
+# Local Maven settings - typically not shared in a project repo
+mvn_settings.xml
