@@ -1,0 +1,28 @@
+---
+version: 1
+service:
+  name: aips-chronon
+  lifecycle: pre-alpha
+  tier: tier_4
+  product: The Product Name
+  owner: ai-platform-dev
+  language: java
+  framework: other
+  description: Fork of airbnb/chronon for WEX
+  aliases:
+    - wexinc/aips-chronon
+  repositories:
+    - name: wexinc/aips-chronon
+      path: "/"
+      provider: github
+  tools:
+    - name: DeepSource
+      category: code
+      url: https://app.deepsource.com/gh/wexinc/aips-chronon
+  dependencies: []
+  tags:
+    - key: pci
+      value: false
+    - key: tag1
+      value: value1
+    

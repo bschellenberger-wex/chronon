@@ -1,0 +1,32 @@
+# see https://docs.deepsource.com/docs/analyzers for more docs on config
+version = 1
+
+exclude_patterns = [
+]
+
+test_patterns = [
+]
+
+# https://docs.deepsource.com/docs/analyzers-secrets
+[[analyzers]]
+name = "secrets"
+enabled = true
+
+# https://docs.deepsource.com/docs/analyzers-docker
+[[analyzers]]
+name = "docker"
+enabled = true
+
+  [analyzers.meta]
+  trusted_registries = [
+      "usartifactorywexinc.jfrog.io",
+      "euartifactorywexinc.jfrog.io",
+      "docker.io",
+      "hub.docker.com",
+      "ghcr.io"
+  ]
+
+# https://docs.deepsource.com/docs/analyzers-shell
+[[analyzers]]
+name = "shell"
+enabled = true
