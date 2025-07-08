@@ -36,14 +36,18 @@ services:
       KAFKA_MESSAGE_MAX_BYTES: 2147483647
 
   main:
-    image: ezvz/chronon
+    build:
+      context: .
+      dockerfile: Dockerfile
     command: bash -c "spark-shell -i scripts/data-loader.scala && tail -f /dev/null"
     ports:
       - "4040:4040"
     environment:
       - USER=root
-      - SPARK_SUBMIT_PATH=spark-submit
+      - SPARK_SUBMIT_PATH=spark-submit # Path is already set up - actual path is /opt/spark/bin/spark-submit
       - PYTHONPATH=/srv/chronon
+      # Note: Spark Version is mostly used by internal Chronon scripts for Online functionality.
+      # Don't worry about it for now.
       - SPARK_VERSION=3.1.1
       - JOB_MODE=local[*]
       - PARALLELISM=2

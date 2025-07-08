@@ -94,6 +94,9 @@ htmlcov/
 # ###################################################################
 # ### Project-Specific & Generated Files
 # ###################################################################
+aips-chronon-config/
+chronon_jars/
+
 # These paths seem specific to generated code or data
 api/py/ai/chronon/api/
 api/py/ai/chronon/thrift/

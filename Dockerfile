@@ -1,11 +1,7 @@
-# Start from a Debian base image
-FROM openjdk:8-jre-slim
+# Start from a Debian base image with Java 11
+FROM openjdk:11-jre-slim
 
-# Set this manually before building the image, requires a local build of the jar
-
-ENV CHRONON_JAR_PATH=spark/target-embedded/scala-2.12/your_build.jar
-
-# Update package lists and install necessary tools
+# TODO Revisit potentially and consider --no-install-recommends
 RUN apt-get update && apt-get install -y \
     curl \
     python3 \
@@ -14,71 +10,63 @@ RUN apt-get update && apt-get install -y \
     vim \
     wget \
     procps \
-    python3-pip
+    python3-pip \
+    thrift-compiler \
+    tar \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV THRIFT_VERSION 0.13.0
-ENV SCALA_VERSION 2.12.12
+# Set versions as environment variables for easy updates
+ENV SCALA_VERSION="2.12.20"
+ENV SPARK_VERSION="3.5.5"
+# Note: The spark distribution for 3.5.x is just hadoop3, not a specific version like 3.2
+ENV HADOOP_VERSION="3"
 
-# Install thrift
-RUN curl -sSL "http://archive.apache.org/dist/thrift/$THRIFT_VERSION/thrift-$THRIFT_VERSION.tar.gz" -o thrift.tar.gz \
-       && mkdir -p /usr/src/thrift \
-       && tar zxf thrift.tar.gz -C /usr/src/thrift --strip-components=1 \
-       && rm thrift.tar.gz \
-       && cd /usr/src/thrift \
-       && ./configure  --without-python --without-cpp \
-       && make \
-       && make install \
-       && cd / \
-       && rm -rf /usr/src/thrift
+# TODO: Dynamically load Chronon configurations from a Git repository.
+# Note: run the prepare_docker_build_context.sh script to load the configurations from a Git repository on your system
+# Current: Copies configs from the 'aips-chronon-config' directory (expected in the build context) for POC testing.
 
-RUN curl https://downloads.lightbend.com/scala/${SCALA_VERSION}/scala-${SCALA_VERSION}.deb -k -o scala.deb && \
-    apt install -y ./scala.deb && \
-    rm -rf scala.deb /var/lib/apt/lists/*
+# Make sure to run prepare_docker_build_context.sh before building the Docker image
+COPY aips-chronon-config /srv/chronon
 
+# Install Scala
+ADD "https://downloads.lightbend.com/scala/${SCALA_VERSION}/scala-${SCALA_VERSION}.deb" /tmp/scala.deb
+RUN apt-get update && apt-get install -y --allow-downgrades /tmp/scala.deb && \
+    rm /tmp/scala.deb
+
+# Set Scala environment variables
 ENV SCALA_HOME="/usr/bin/scala"
 ENV PATH=${PATH}:${SCALA_HOME}/bin
 
-## Download spark and hadoop dependencies and install
-
-# Optional env variables
-ENV SPARK_HOME=${SPARK_HOME:-"/opt/spark"}
-ENV HADOOP_HOME=${HADOOP_HOME:-"/opt/hadoop"}
-ENV SPARK_VERSION=${SPARK_VERSION:-"3.1.1"}
-ENV HADOOP_VERSION=${HADOOP_VERSION:-"3.2"}
-RUN mkdir -p ${HADOOP_HOME} && mkdir -p ${SPARK_HOME}
-RUN mkdir -p /opt/spark/spark-events
+# Download and install Spark
+ENV SPARK_HOME="/opt/spark"
 WORKDIR ${SPARK_HOME}
 
-
-RUN curl https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz -o spark.tgz \
- && tar xvzf spark.tgz --directory /opt/spark --strip-components 1 \
- && rm -rf spark.tgz
-
-
-# Install python deps
-COPY quickstart/requirements.txt .
-RUN pip3 install -r requirements.txt
+# Use ADD instead of wget - ADD will only download if the file has changed
+ADD "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz" /tmp/spark.tgz
+RUN tar xvzf /tmp/spark.tgz --directory /opt/spark --strip-components 1 \
+ && rm -rf /tmp/spark.tgz
 
 
+# Install Python dependencies
+COPY requirements_wex.txt /srv/chronon/requirements.txt
+RUN pip3 install -r /srv/chronon/requirements.txt
+
+# Set user to root - revisit later
+ENV USER=root
+
+# Set Spark environment variables
 ENV PATH="/opt/spark/sbin:/opt/spark/bin:${PATH}"
 ENV SPARK_HOME="/opt/spark"
-
-COPY quickstart/conf/spark-defaults.conf "$SPARK_HOME/conf"
-
-RUN chmod u+x /opt/spark/sbin/* && \
-    chmod u+x /opt/spark/bin/*
-
 ENV PYTHONPATH=$SPARK_HOME/python/:/srv/chronon/:$PYTHONPATH
 
-# If trying a standalone docker cluster
-WORKDIR ${SPARK_HOME}
-# If doing a regular local spark box.
-WORKDIR /srv/chronon
-
+# TODO - We need to pull the JAR form artifactory and for the correct spark cluster version
+# For Local development, we copy the JAR from the local 'chronon_jars' directory in the meantime
+# Define Chronon JAR path and copy the JAR
+# TODO Revisit later, we are leveraging chronon defaults for now and we may need to configure multiple spark versions in the future.
 ENV DRIVER_JAR_PATH="/srv/spark/spark_embedded.jar"
+COPY chronon_jars/chronon_spark_driver.jar "${DRIVER_JAR_PATH}"
+ENV CHRONON_DRIVER_JAR="${DRIVER_JAR_PATH}"
 
-COPY api/py/test/sample ./
-COPY quickstart/mongo-online-impl /srv/onlineImpl
-COPY $CHRONON_JAR_PATH "$DRIVER_JAR_PATH"
-
-ENV CHRONON_DRIVER_JAR="$DRIVER_JAR_PATH"
+# Set a final working directory for the application
+WORKDIR /srv/chronon

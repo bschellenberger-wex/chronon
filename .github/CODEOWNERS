@@ -1,3 +1,36 @@
 # See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
-* @wexinc/ai-platform-dev
+# -- Core Maintainers --
+# Ben Schellenberger (@bschellenberger-wex) is the primary maintainer.
+# The other users listed below can also review changes and provide approvals in an emergency ("break glass" scenario).
+# This structure ensures compatibility with upstream changes and keeps this repository aligned with the Chronon community's goals and projects.
+# To become a core maintainer, strong familiarity with the Chronon project is required. Please discuss with Ben and management.
+* @bschellenberger-wex @mliu-wex @hanjoo-lim-wex @zlgonzalez-wex
+
+# -- Admin Ownership --
+# The ai-platform-admins team owns the repository's infrastructure (build, CI/CD, docs, etc.).
+# This separation of duties prevents repository lockout and ensures project health.
+
+# Repository Governance & Automation
+.github/ @wexinc/ai-platform-admins
+opslevel.yml @wexinc/ai-platform-admins
+
+# Build System (Bazel)
+**/BUILD.bazel @wexinc/ai-platform-admins
+**/*.bzl @wexinc/ai-platform-admins
+WORKSPACE @wexinc/ai-platform-admins
+
+# Build & Release Scripts
+prepare_docker_build_context.sh @wexinc/ai-platform-admins
+
+# Containerization
+Dockerfile @wexinc/ai-platform-admins
+docker-compose.yml @wexinc/ai-platform-admins
+
+# Python Environment
+requirements_wex.txt @wexinc/ai-platform-admins
+requirements_lock.txt @wexinc/ai-platform-admins
+
+# Documentation
+*.md @wexinc/ai-platform-admins
+docs/ @wexinc/ai-platform-admins
