@@ -7,7 +7,7 @@ set -euo pipefail
 REGION=${2:-"us-east-1"}
 TAG=${4:-"0.0.1"}
 
-IMAGE_URI="975049916663.dkr.ecr.$REGION.amazonaws.com/chronon-emr-spark:$TAG"
+IMAGE_URI="975049916663.dkr.ecr.$REGION.amazonaws.com/chronon-spark-emr:$TAG"
 
 echo "Building Docker image: $IMAGE_URI"
-docker build -f Dockerfile.emr-spark . -t "$IMAGE_URI"
+docker build --platform linux/amd64 -f emr-spark.Dockerfile . -t "$IMAGE_URI"

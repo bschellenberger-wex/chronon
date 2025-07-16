@@ -22,10 +22,12 @@ WORKSPACE @wexinc/ai-platform-admins
 
 # Build & Release Scripts
 prepare_docker_build_context.sh @wexinc/ai-platform-admins
+build_emr_spark.sh @wexinc/ai-platform-admins
 
 # Containerization
 Dockerfile @wexinc/ai-platform-admins
 docker-compose.yml @wexinc/ai-platform-admins
+emr-spark.Dockerfile @wexinc/ai-platform-admins
 
 # Python Environment
 requirements_wex.txt @wexinc/ai-platform-admins
