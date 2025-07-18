@@ -13,24 +13,28 @@
 set -e
 
 # Check if a source directory is provided
-if [ -z "$1" ]; then
-  echo "Error: No source directory provided."
-  echo "Usage: ./prepare_docker_build_context.sh /path/to/chronon/configs"
-  echo "The path should point to the 'chronon' directory within your local checkout of the aips-chronon-config repository (https://github.com/wexinc/aips-chronon-config)."
-  echo "For example: ./prepare_docker_build_context.sh /path/to/aips-chronon-config/chronon"
-  exit 1
+if [ -z "$CHRONON_CONFIG_PATH" ]; then
+  if [ -n "$1" ]; then
+    CHRONON_CONFIG_PATH="$1"
+  else
+    echo "Error: No source directory provided."
+    echo "Usage: CHRONON_CONFIG_PATH=/path/to/chronon ./prepare_docker_build_context.sh"
+    echo "   or: ./prepare_docker_build_context.sh /path/to/chronon"
+    echo "The path should point to the 'chronon' directory within your local checkout of the aips-chronon-config repository (https://github.com/wexinc/aips-chronon-config)."
+    echo "For example: ./prepare_docker_build_context.sh /path/to/aips-chronon-config/chronon"
+    exit 1
+  fi
 fi
 
 # Define the source and destination directories
 # The destination directory is included in .gitignore to avoid committing it.
-CHRONON_CONFIG_SRC="$1"
-if [[ ! "$CHRONON_CONFIG_SRC" =~ chronon$ ]]; then
+if [[ ! "$CHRONON_CONFIG_PATH" =~ chronon$ ]]; then
     echo "Provided path doesn't end with 'chronon'. Appending '/chronon' to the path."
-    CHRONON_CONFIG_SRC="$CHRONON_CONFIG_SRC/chronon"
+    CHRONON_CONFIG_PATH="$CHRONON_CONFIG_PATH/chronon"
 fi
 
-if [ ! -d "$CHRONON_CONFIG_SRC" ]; then
-    echo "ERROR: The configuration directory '$CHRONON_CONFIG_SRC' does not exist."
+if [ ! -d "$CHRONON_CONFIG_PATH" ]; then
+    echo "ERROR: The configuration directory '$CHRONON_CONFIG_PATH' does not exist."
     echo "Please provide a valid path to your 'aips-chronon-config' repository."
     exit 1
 fi
@@ -53,8 +57,8 @@ if [ -d "$TMP_DIR" ]; then
   rm -rf "$TMP_DIR"
 fi
 
-echo "Copying configuration files from $CHRONON_CONFIG_SRC to $TMP_DIR"
-cp -r "$CHRONON_CONFIG_SRC" "$TMP_DIR"
+echo "Copying configuration files from $CHRONON_CONFIG_PATH to $TMP_DIR"
+cp -r "$CHRONON_CONFIG_PATH" "$TMP_DIR"
 
 # Remove the production directory from the temp location if it exists
 # As we don't want to include production configs in the build yet.
@@ -71,10 +75,9 @@ cp -a "$TMP_DIR"/. "$DEST_DIR"/
 rm -rf "$TMP_DIR"
 
 # Define and copy the Chronon Spark Driver JAR - currently needs to be built manually
-# TODO: Automate downloading JARs from Artifactory later in Dockerfile.
+# CHRONON_SPARK_JAR must be set as an environment variable
 if [ -z "$CHRONON_SPARK_JAR" ]; then
-  echo "ERROR: CHRONON_SPARK_JAR environment variable not set."
-  echo "Please build the Chronon Spark JAR first. See BUILDING_CHRONON_AT_WEX.md for instructions."
+  echo "ERROR: CHRONON_SPARK_JAR environment variable must be set to the path of your Chronon Spark JAR." >&2
   exit 1
 fi
 
@@ -82,7 +85,7 @@ JAR_SOURCE_PATH="$CHRONON_SPARK_JAR"
 
 # Check if the provided path ends with .jar
 if [[ ! "$JAR_SOURCE_PATH" =~ \.jar$ ]]; then
-  echo "ERROR: CHRONON_SPARK_JAR must point to a .jar file. Got: $JAR_SOURCE_PATH"
+  echo "ERROR: CHRONON_SPARK_JAR must point to a .jar file. Got: $JAR_SOURCE_PATH" >&2
   exit 1
 fi
 

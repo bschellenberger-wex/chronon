@@ -21,8 +21,10 @@ opslevel.yml @wexinc/ai-platform-admins
 WORKSPACE @wexinc/ai-platform-admins
 
 # Build & Release Scripts
-prepare_docker_build_context.sh @wexinc/ai-platform-admins
+Makefile @wexinc/ai-platform-admins
+build_main_app.sh @wexinc/ai-platform-admins
 build_emr_spark.sh @wexinc/ai-platform-admins
+prepare_docker_build_context.sh @wexinc/ai-platform-admins
 
 # Containerization
 Dockerfile @wexinc/ai-platform-admins
@@ -36,3 +38,4 @@ requirements_lock.txt @wexinc/ai-platform-admins
 # Documentation
 *.md @wexinc/ai-platform-admins
 docs/ @wexinc/ai-platform-admins
+BUILDING_CHRONON_AT_WEX.md @wexinc/ai-platform-admins

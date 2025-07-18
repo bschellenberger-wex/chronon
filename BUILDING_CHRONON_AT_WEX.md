@@ -1,5 +1,19 @@
 # Building Chronon at WEX
 
+* [Prerequisites](#prerequisites)
+* [Building with Bazel](#building-with-bazel)
+    * [Selecting Java Version](#selecting-java-version)
+    * [VPN and Java Keystore](#vpn-and-java-keystore)
+    * [Building for a specific Spark version](#building-for-a-specific-spark-version)
+    * [Available Spark Versions](#available-spark-versions)
+* [Building Other Artifacts](#building-other-artifacts)
+* [Docker](#docker)
+    * [Prerequisites for Docker Builds](#prerequisites-for-docker-builds)
+    * [Building the Main Chronon Docker Image](#building-the-main-chronon-docker-image)
+    * [Building the EMR Spark Docker Image](#building-the-emr-spark-docker-image)
+    * [Defense Mechanisms](#defense-mechanisms)
+* [SBT Build (Not Recommended)](#sbt-build-not-recommended)
+
 This document outlines the process for building Chronon artifacts at WEX. Due to specific version requirements for Spark, it's necessary to build Chronon from source to ensure compatibility.
 
 ## Prerequisites
@@ -70,80 +84,79 @@ For more detailed information on building, testing, and dependency management, p
 
 ## Docker
 
-This section provides instructions for building the Chronon Docker image for local development and testing.
+This section provides instructions for building and publishing the Chronon Docker image for local development and testing (to Artifactory), as well as the EMR Spark image for EMR Serverless (to ECR).
 
-### Building the Docker Image
+### Prerequisites for Docker Builds
 
-Building the Docker image requires two main steps: preparing the necessary files using the `prepare_docker_build_context.sh` script and then running the `docker build` command.
+- **Set Required Environment Variables:**
+  - `CHRONON_CONFIG_PATH`: Path to your local `chronon` configuration directory (e.g., `/path/to/aips-chronon-config/chronon`).
+  - `CHRONON_SPARK_JAR`: Path to your Chronon Spark JAR (e.g., `/path/to/bazel-bin/spark/spark-assembly_deploy.jar`).
+- **Authenticate to Registries Before Pushing:**
+  - For Artifactory: `docker login usartifactorywexinc.jfrog.io -u {wexid}`
+    - When prompted for a password, use your Artifactory API Key.
+  - For ECR: `aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 975049916663.dkr.ecr.us-east-1.amazonaws.com`
 
-1.  **Prepare the Build Context**
+### Building the Main Chronon Docker Image
 
-    First, you need to run the `prepare_docker_build_context.sh` script. This script copies the Chronon Spark JAR and your local Chronon configurations into the Docker build context. Before running it, make sure you have:
+1. **Prepare the Build Context**
 
-    *   Built the Chronon uber JAR (see [Building with Bazel](#building-with-bazel)).
-    *   Set the `CHRONON_SPARK_JAR` environment variable to point to the JAR file.
-    *   A local checkout of the `aips-chronon-config` repository.
+   The `prepare_docker_build_context.sh` script copies the Chronon Spark JAR and your local Chronon configurations into the Docker build context. You must set the required environment variables before running the build:
 
-    Run the script from the root of this repository, passing the path to your local `chronon` configurations directory:
+   ```bash
+   export CHRONON_CONFIG_PATH=/path/to/aips-chronon-config/chronon
+   export CHRONON_SPARK_JAR=/path/to/bazel-bin/spark/spark-assembly_deploy.jar
+   make image-package
+   ```
 
-    ```bash
-    # Example assuming aips-chronon-config is in a sibling directory
-    ./prepare_docker_build_context.sh ../aips-chronon-config
-    ```
+   The Makefile will check for these environment variables and fail early if they are not set.
 
-2.  **Build the Image**
+2. **Build the Image**
 
-    Once the script completes successfully, you can build the Docker image:
+   The `image-package` target will run the build scripts and produce a Docker image tagged for Artifactory. The tag is always read from the `VERSION` file—passing a tag as an argument is not allowed and will result in an error.
 
-    ```bash
-    docker build -t chronon:latest .
-    ```
+3. **Push the Image (Release Only)**
 
-### Using Docker Compose
+   Only strict semantic version tags (e.g., `1.2.3`) can be pushed. The Makefile will block pushes for SNAPSHOT or non-semver tags, and will also prevent overwriting existing tags in Artifactory.
 
-A `docker-compose.yml` file is included to simplify local development by orchestrating the startup of the main Chronon container and its dependencies, such as Kafka, Zookeeper, and MongoDB.
+   ```bash
+   make image-push
+   ```
 
-To start the environment, run:
+   **Note:** Authenticate to Artifactory before pushing.
 
-```bash
-docker-compose up -d
-```
+### Building the EMR Spark Docker Image
 
-While `docker-compose` is useful for quick, isolated testing, the local Kubernetes deployment is recommended for a development environment that more closely resembles production. You can also use the Kubernetes deployment from the IaC repository to deploy the image you build, if you prefer.
+1. **Build the Image**
 
-To sync local configurations to the running docker container, you can use the `copy_config_to_docker.sh` script.
+   The EMR Spark image can be built using the Makefile target (recommended):
 
-```bash
-# Example assuming aips-chronon-config is in a sibling directory
-./copy_config_to_docker.sh ../aips-chronon-config
-```
+   ```bash
+   make image-package-emr-spark
+   ```
 
-### How `prepare_docker_build_context.sh` Works
+   Alternatively, you can use the `build_emr_spark.sh` script directly. The script will always use the tag specified in the `VERSION.emr-spark` file:
 
-If you are building and running the Docker file for publishing or development reasons, the `prepare_docker_build_context.sh` script sets up the incoming JAR for the Dockerfile and the initial set of Chronon configurations to build into the Docker image. It performs two main functions:
+   ```bash
+   ./build_emr_spark.sh 975049916663 us-east-1 chronon-spark-emr
+   ```
 
-1.  **Injecting the Spark JAR**: Before running the script, you must build the Chronon uber JAR as described in the [Building with Bazel](#building-with-bazel) section. The script then uses the `CHRONON_SPARK_JAR` environment variable to identify the Chronon Spark JAR that needs to be included in the Docker build.
-2.  **Copying Configurations**: It copies your local feature definitions and Chronon configurations into the build context, so they are included in the Docker image.
+   Any tag is allowed for building, but only strict semantic version tags (e.g., `1.2.3`) can be pushed to ECR.
 
-This script is primarily for local development to streamline testing and iteration. It will be replaced by a more robust solution for production environments.
+2. **Push the Image (Release Only)**
 
-To use the script, you first need to build the "uber" JAR that contains all the necessary dependencies. The build process will generate a JAR file in the `bazel-bin/spark` directory with the name `spark-assembly_deploy.jar`.
+   The Makefile's `image-push-emr-spark` target enforces semantic versioning and will block pushes for SNAPSHOT or non-semver tags, and will prevent overwriting existing tags in ECR.
 
-You will then need to set the `CHRONON_SPARK_JAR` environment variable to the path of the generated JAR.
+   ```bash
+   make image-push-emr-spark
+   ```
 
-If you intend to use the `prepare_docker_build_context.sh` script, you will need to set the `CHRONON_SPARK_JAR` environment variable to the path of the generated JAR. For example:
+   **Note:** Authenticate to ECR before pushing.
 
-```bash
-export CHRONON_SPARK_JAR="$(pwd)/bazel-bin/spark/spark-assembly_deploy.jar"
-```
+### Defense Mechanisms
 
-To make this setting persistent, you can add the `export` command to your shell's startup file (e.g., `~/.zshrc` or `~/.bashrc`).
+Both the Makefile and build scripts include defense mechanisms to prevent accidental overwriting of existing tags in Artifactory and ECR. If you attempt to push a tag that already exists, the push will be blocked and an error will be shown.
 
-For long-term development, you may want to copy the generated JAR to a more permanent location on your local system, as the `bazel-bin` directory can be cleared. If you do so, remember to update the `CHRONON_SPARK_JAR` environment variable to point to the new path. You can reuse this JAR for subsequent Docker builds and only need to rebuild it when you have a new version of the Chronon source code.
-
-### Syncing Configurations to a Live Pod
-
-If you are using the IaC repository with the local Kubernetes deployment, there is a `copy_config_to_pod.sh` script that can be used to sync configurations with the live pod. This is useful for development as it avoids having to rebuild the image every time you change a configuration.
+For more details on the build and push process, see the comments in the Makefile and scripts.
 
 ## SBT Build (Not Recommended)
 
