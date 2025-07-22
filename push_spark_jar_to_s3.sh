@@ -17,6 +17,21 @@ if [ -z "$JAR" ]; then
   exit 1
 fi
 
+# Check if the artifact already exists in S3
+if aws s3 ls "$S3_PATH/$JAR" >/dev/null 2>&1; then
+  if [[ "$JAR" == *SNAPSHOT* ]]; then
+    echo "Warning: Overwriting existing SNAPSHOT artifact in S3: $S3_PATH/$JAR"
+    read -p "Are you sure you want to overwrite this SNAPSHOT artifact? Type YES to continue: " confirm
+    if [[ "$confirm" != "YES" ]]; then
+      echo "Aborting upload."
+      exit 4
+    fi
+  else
+    echo "Error: Artifact $S3_PATH/$JAR already exists and is not a SNAPSHOT. Aborting to prevent overwrite." >&2
+    exit 3
+  fi
+fi
+
 echo "Uploading $JAR to $S3_PATH/"
 aws s3 cp "$JAR" "$S3_PATH/"
 
