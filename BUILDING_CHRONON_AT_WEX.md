@@ -30,6 +30,8 @@ This document outlines the process for building Chronon artifacts at WEX. Due to
 
 The Bazel build system is configured to produce versioned artifacts that include the Spark and Scala versions in the name. This is the recommended way to build Chronon. Spark versions are generally binary compatible within minor versions. For example, a build for a `3.5.x` version of Spark is compatible with all other `3.5.x` versions, a build for `3.4.x` is compatible with all other `3.4.x` versions, and so on.
 
+We provide helper scripts to simplify building and publishing Chronon artifacts. These scripts ensure that your JARs are versioned with the Chronon, Spark, and Scala versions for traceability and compatibility.
+
 ### Selecting Java Version
 
 You can specify the Java version for the compilation by using the appropriate `--config` flag. For example, to build with Java 11, you would use `--config java_11`.
@@ -55,6 +57,48 @@ The following command will build the `spark-assembly` target for Spark 3.5 with 
 ```bash
 bazel build --config java_11 --config scala_2.12 --config spark_3.5 //spark:spark-assembly_deploy.jar
 ```
+
+### Building the Spark JAR
+
+Use the provided script to build the Spark JAR with Bazel and produce a versioned artifact:
+
+```bash
+./build_spark_jar.sh
+```
+
+This will output a JAR named like:
+
+```
+chronon-spark-assembly_<CHRONON_VERSION>_spark<SPARK_VERSION>_scala<SCALA_VERSION>.jar
+```
+
+You can override the Spark, Scala, or Java version by setting environment variables before running the script:
+
+```bash
+SPARK_VERSION_OVERRIDE=3.5 SCALA_VERSION_OVERRIDE=2.12 JAVA_CONFIG_OVERRIDE=java_11 ./build_spark_jar.sh
+```
+
+### Uploading Artifacts to S3
+
+To upload the most recent versioned Spark JAR to S3, use the provided script:
+
+```bash
+./push_spark_jar_to_s3.sh [dev|stage|prod]
+```
+
+- The default environment is `dev`.
+- The JAR will be uploaded to:
+  - `s3://ai-chronon-emr-serverless-resources-<env>/chronon-driver-jars/`
+
+**Make sure you are logged into the appropriate AWS environment (e.g., using `aws sso login` or setting the correct AWS profile) before running the upload script.**
+
+Example:
+
+```bash
+./push_spark_jar_to_s3.sh stage
+```
+
+This will upload to the `stage` bucket. The script will print the S3 path of the uploaded artifact.
 
 ### Available Spark Versions
 
