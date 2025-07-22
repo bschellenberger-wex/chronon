@@ -24,7 +24,10 @@ WORKSPACE @wexinc/ai-platform-admins
 Makefile @wexinc/ai-platform-admins
 build_main_app.sh @wexinc/ai-platform-admins
 build_emr_spark.sh @wexinc/ai-platform-admins
+build_spark_jar.sh @wexinc/ai-platform-admins
+push_spark_jar_to_s3.sh @wexinc/ai-platform-admins
 prepare_docker_build_context.sh @wexinc/ai-platform-admins
+VERSION.emr-spark @wexinc/ai-platform-admins # AI Platform Admins can adjust this file to update the EMR Spark image tag.
 
 # Containerization
 Dockerfile @wexinc/ai-platform-admins
