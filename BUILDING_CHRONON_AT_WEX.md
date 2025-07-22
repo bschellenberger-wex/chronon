@@ -5,6 +5,8 @@
     * [Selecting Java Version](#selecting-java-version)
     * [VPN and Java Keystore](#vpn-and-java-keystore)
     * [Building for a specific Spark version](#building-for-a-specific-spark-version)
+    * [Building the Spark JAR](#building-the-spark-jar)
+    * [Uploading Artifacts to S3](#uploading-artifacts-to-s3)
     * [Available Spark Versions](#available-spark-versions)
 * [Building Other Artifacts](#building-other-artifacts)
 * [Docker](#docker)
