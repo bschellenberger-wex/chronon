@@ -4,9 +4,9 @@ FROM openjdk:11-jre-slim
 # TODO Revisit potentially and consider --no-install-recommends
 RUN apt-get update && apt-get install -y \
     curl \
-    python3.9 \
-    python3.9-dev \
-    python3.9-distutils \
+    python3.10 \
+    python3.10-dev \
+    python3.10-distutils \
     python3-setuptools \
     vim \
     wget \
@@ -30,8 +30,8 @@ RUN apt-get update && apt-get install -y \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Set python3 alternatives to python3.9
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
+# Set python3 alternatives to python3.10
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
 
 # Set versions as environment variables for easy updates
 ENV SCALA_VERSION="2.12.20"
