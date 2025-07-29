@@ -4,8 +4,9 @@ FROM openjdk:11-jre-slim
 # TODO Revisit potentially and consider --no-install-recommends
 RUN apt-get update && apt-get install -y \
     curl \
-    python3 \
-    python3-dev \
+    python3.10 \
+    python3.10-dev \
+    python3.10-distutils \
     python3-setuptools \
     vim \
     wget \
@@ -13,8 +14,24 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     thrift-compiler \
     tar \
+    unzip \
     && update-ca-certificates \
+    # Install AWS CLI v2 (official installer, works for both ARM and x86)
+    && ARCH=$(uname -m) \
+    && if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "/tmp/awscliv2.zip"; \
+    else \
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"; \
+    fi \
+    && unzip /tmp/awscliv2.zip -d /tmp \
+    && /tmp/aws/install \
+    && rm -rf /tmp/awscliv2.zip /tmp/aws \
+    && apt-get remove --purge -y unzip \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+
+# Set python3 alternatives to python3.10
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
 
 # Set versions as environment variables for easy updates
 ENV SCALA_VERSION="2.12.20"
