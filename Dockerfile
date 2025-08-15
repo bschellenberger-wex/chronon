@@ -1,22 +1,20 @@
-# Start from a Debian base image with Java 11
-FROM openjdk:11-jre-slim
+# Start from a Python 3.12 base image and add Java
+FROM python:3.12-slim
 
 # TODO Revisit potentially and consider --no-install-recommends
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    python3.10 \
-    python3.10-dev \
-    python3.10-distutils \
-    python3-setuptools \
+    default-jre-headless \
+    less \
     vim \
     wget \
     procps \
-    python3-pip \
-    thrift-compiler \
     tar \
     unzip \
+    ca-certificates \
+    thrift-compiler \
     && update-ca-certificates \
-    # Install AWS CLI v2 (official installer, works for both ARM and x86)
+    # Install AWS CLI v2 (official installer, works for both ARM and x86) \
     && ARCH=$(uname -m) \
     && if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
         curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "/tmp/awscliv2.zip"; \
@@ -30,8 +28,6 @@ RUN apt-get update && apt-get install -y \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Set python3 alternatives to python3.10
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
 
 # Set versions as environment variables for easy updates
 ENV SCALA_VERSION="2.12.20"
@@ -44,7 +40,6 @@ ENV HADOOP_VERSION="3"
 # Current: Copies configs from the 'aips-chronon-config' directory (expected in the build context) for POC testing.
 
 # Make sure to run prepare_docker_build_context.sh before building the Docker image
-COPY aips-chronon-config /srv/chronon
 
 # Install Scala
 ADD "https://downloads.lightbend.com/scala/${SCALA_VERSION}/scala-${SCALA_VERSION}.deb" /tmp/scala.deb
@@ -65,25 +60,35 @@ RUN tar xvzf /tmp/spark.tgz --directory /opt/spark --strip-components 1 \
  && rm -rf /tmp/spark.tgz
 
 
-# Install Python dependencies
-COPY requirements_wex.txt /srv/chronon/requirements.txt
-RUN pip3 install -r /srv/chronon/requirements.txt
+# Create a non-root user and group for running Chronon
+RUN groupadd --gid 1001 chronon \
+    && useradd --uid 1001 --gid 1001 --create-home --home-dir /srv/chronon chronon
 
-# Set user to root - revisit later
-ENV USER=root
+# Install Python dependencies
+COPY --chown=chronon:chronon requirements_wex.txt /srv/chronon/requirements.txt
+RUN pip3 install --no-cache-dir -r /srv/chronon/requirements.txt
+
+# Copy configs, then set permissions
+COPY --chown=chronon:chronon aips-chronon-config /srv/chronon/configs
+RUN mkdir -p /srv/chronon/jars \
+    && chown chronon:chronon /srv/chronon/jars \
+    && chmod 700 /srv/chronon/jars
+
+# Set user to chronon for all subsequent commands
+USER chronon
+ENV USER=chronon
 
 # Set Spark environment variables
 ENV PATH="/opt/spark/sbin:/opt/spark/bin:${PATH}"
 ENV SPARK_HOME="/opt/spark"
-ENV PYTHONPATH=$SPARK_HOME/python/:/srv/chronon/:$PYTHONPATH
+ENV PYTHONPATH=$SPARK_HOME/python/:/srv/chronon/configs/:$PYTHONPATH
 
-# TODO - We need to pull the JAR form artifactory and for the correct spark cluster version
-# For Local development, we copy the JAR from the local 'chronon_jars' directory in the meantime
-# Define Chronon JAR path and copy the JAR
-# TODO Revisit later, we are leveraging chronon defaults for now and we may need to configure multiple spark versions in the future.
-ENV DRIVER_JAR_PATH="/srv/spark/spark_embedded.jar"
-COPY chronon_jars/chronon_spark_driver.jar "${DRIVER_JAR_PATH}"
+# Place the Chronon JAR in a directory owned by chronon
+ENV DRIVER_JAR_PATH="/srv/chronon/jars/spark_embedded.jar"
+COPY --chown=chronon:chronon chronon_jars/chronon_spark_driver.jar "$DRIVER_JAR_PATH"
+# The JAR will be downloaded at runtime by a bootstrap script. Ensure chronon user has access.
+# Example: The bootstrap script should download the JAR to $DRIVER_JAR_PATH
 ENV CHRONON_DRIVER_JAR="${DRIVER_JAR_PATH}"
 
-# Set a final working directory for the application
-WORKDIR /srv/chronon
+# Set the working directory to the configs directory
+WORKDIR /srv/chronon/configs

@@ -2,5 +2,6 @@
 # based on spark version and chronon runtime.
 # We may have our own custom WEX chronon runtime in the future, but for now we use the one from the repo.
 jupyter==1.1.1
-chronon-ai==0.0.96
+chronon-ai==0.0.104
 pyspark==3.5.5 # 3.5.6 is latest, but we're sticking to 3.5.5 for now
+boto3
