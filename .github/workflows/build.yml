@@ -1,0 +1,283 @@
+name: "Build and Test Chronon"
+
+on:
+  workflow_dispatch:
+    inputs:
+      scala_version:
+        description: "Scala version to build with"
+        required: false
+        default: "2.12"
+        type: choice
+        options:
+          - "2.12"
+          - "2.13"
+      java_version:
+        description: "Java version to build with"
+        required: false
+        default: "11"
+        type: choice
+        options:
+          - "11"
+          - "21"
+      build_targets:
+        description: "Which JARs to build"
+        required: false
+        default: "spark-assembly"
+        type: choice
+        options:
+          - "spark-assembly"
+          - "all"
+      run_tests:
+        description: "Run tests after building"
+        required: false
+        default: true
+        type: boolean
+      debug:
+        description: "Enable debug logging"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check Pre-installed Tools
+      run: |
+        echo "🔍 GitHub runner comes pre-equipped with:"
+        echo "=================================="
+        
+        echo "✅ Java versions available:"
+        ls -la /usr/lib/jvm/ | grep temurin
+        
+        echo "✅ Current Java version:"
+        java -version 2>&1
+        echo "JAVA_HOME: $JAVA_HOME"
+        
+        echo "✅ Bazel tools already installed:"
+        echo "Bazel: $(which bazel) - $(bazel --version 2>/dev/null || echo 'Version check failed')"
+        echo "Bazelisk: $(which bazelisk) - $(bazelisk version 2>/dev/null || echo 'Version check failed')"
+        
+        echo "=================================="
+
+    - name: Set up Java
+      uses: actions/setup-java@v3
+      with:
+        java-version: ${{ inputs.java_version }}
+        distribution: temurin
+
+    - name: Install Thrift 0.13 # TODO: We need to install thrift 0.13 on our custom runner and build it from source for now
+      run: |
+        echo "🔧 Installing Thrift 0.13 from source..."
+        
+        # Clean up any existing thrift_build directory
+        rm -rf thrift_build
+        mkdir thrift_build
+        cd thrift_build
+        
+        # Download archive and verify it matches our expected checksum.
+        THRIFT_HTTP_ARCHIVE=https://archive.apache.org/dist/thrift/0.13.0/thrift-0.13.0.tar.gz
+        THRIFT_ARCHIVE=thrift.tar.gz
+        THRIFT_EXPECTED_CHECKSUM_SHA256=7ad348b88033af46ce49148097afe354d513c1fca7c607b59c33ebb6064b5179
+        wget "$THRIFT_HTTP_ARCHIVE" -O "$THRIFT_ARCHIVE"
+        THRIFT_ACTUAL_CHECKSUM_SHA256=$(sha256sum "$THRIFT_ARCHIVE" | awk '{ print $1 }')
+        if [ "$THRIFT_EXPECTED_CHECKSUM_SHA256" != "$THRIFT_ACTUAL_CHECKSUM_SHA256" ]; then
+            echo "❌ Checksum does not match expected value" >&2
+            echo " - location: $THRIFT_HTTP_ARCHIVE" >&2
+            echo " - expected: $THRIFT_EXPECTED_CHECKSUM_SHA256" >&2
+            echo " - obtained: $THRIFT_ACTUAL_CHECKSUM_SHA256" >&2
+            exit 1
+        fi
+        
+        echo "✅ Checksum verified. Building Thrift from source..."
+        # Build thrift from source.
+        mkdir src 
+        tar zxf thrift.tar.gz -C src --strip-components=1
+        cd src
+        # Install build dependencies
+        sudo apt update
+        sudo apt install -y build-essential libssl-dev pkg-config flex bison
+        
+        # Configure and build (only the compiler, skip all libraries)
+        ./configure --without-cpp --without-java --without-python --without-py3 --without-ruby --without-haskell --without-erlang --without-perl --without-php --without-php_extension --without-c_glib --without-csharp --without-go --without-nodejs --without-lua --without-qt5 --without-dart --without-swift --without-js --without-d --without-haxe --without-cl --without-as3 --without-dotnetcore --without-netstd --without-rs
+        make
+        
+        # Install
+        sudo make install
+        
+        # Verify installation
+        echo "✅ Thrift installation completed"
+        echo "Thrift version: $(thrift --version)"
+        echo "which thrift: $(which thrift)"
+        
+        # Verify it's exactly version 0.13.x
+        thrift_version=$(thrift --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        echo "Installed Thrift version: $thrift_version"
+        if [[ "$thrift_version" == 0.13.* ]]; then
+          echo "✅ Correct Thrift 0.13.x version confirmed"
+        else
+          echo "❌ Warning: Expected 0.13.x but got $thrift_version"
+          exit 1
+        fi
+
+    - name: Verify Environment
+      run: |
+        echo "✅ Verifying environment setup..."
+        echo "JAVA_HOME: $JAVA_HOME"
+        echo "Java version:"
+        java -version
+        echo "Bazelisk version:"
+        bazelisk version
+        echo "Bazel version:"
+        bazel version
+
+    - name: Project Structure Check
+      run: |
+        echo "🔍 Checking Chronon project structure..."
+        echo "Current directory: $(pwd)"
+        echo "Directory contents:"
+        ls -la
+        
+        echo "Looking for Bazel files:"
+        ls -la WORKSPACE* BUILD* .bazelrc .bazelversion 2>/dev/null || echo "Some Bazel files not found"
+        
+        echo "Checking if this is a Bazel workspace:"
+        if [ -f "WORKSPACE" ] || [ -f "WORKSPACE.bazel" ]; then
+          echo "✅ Found Bazel workspace file"
+        else
+          echo "❌ No Bazel workspace file found"
+        fi
+        
+        echo "Checking for Chronon-specific files:"
+        ls -la api/ aggregator/ docs/ spark/ 2>/dev/null || echo "Some Chronon directories not found"
+
+    - name: Debug Information
+      if: ${{ inputs.debug }}
+      run: |
+        echo "🐛 DEBUG MODE - Additional environment info"
+        echo "Repository: ${{ github.repository }}"
+        echo "Branch: ${{ github.ref }}"
+        echo "Event: ${{ github.event_name }}"
+        echo "Actor: ${{ github.actor }}"
+        echo "Working Directory: $(pwd)"
+        echo "Build Configuration:"
+        echo "  - Scala: ${{ inputs.scala_version }}"
+        echo "  - Java: ${{ inputs.java_version }}"
+        echo "  - Targets: ${{ inputs.build_targets }}"
+
+    - name: Build Chronon JARs
+      run: |
+        echo "🚀 Building Chronon JARs..."
+        echo "Configuration: Java ${{ inputs.java_version }}, Scala ${{ inputs.scala_version }}"
+        echo "Targets: ${{ inputs.build_targets }}"
+        
+        # Set Bazel configs
+        BAZEL_CONFIGS="--config java_${{ inputs.java_version }} --config scala_${{ inputs.scala_version }} --config spark_3.5"
+        
+        if [ "${{ inputs.build_targets }}" = "spark-assembly" ]; then
+          echo "Building Spark assembly only..."
+          bazel build $BAZEL_CONFIGS //spark:spark-assembly_deploy.jar
+        else
+          echo "Building all JARs..."
+          bazel build $BAZEL_CONFIGS \
+            //aggregator:aggregator \
+            //api:api-lib \
+            //online:online \
+            //service:service \
+            //spark:spark-assembly_deploy.jar
+        fi
+        
+        echo "✅ Build completed successfully"
+        
+        # Show build summary
+        echo ""
+        echo "📦 Build Summary:"
+        echo "=================="
+        
+        echo "Key Component Artifacts:"
+        echo "========================"
+        
+        # Check for Spark assembly (always expected)
+        if [ -f "bazel-bin/spark/spark-assembly_deploy.jar" ]; then
+          size=$(ls -lh bazel-bin/spark/spark-assembly_deploy.jar | awk '{print $5}')
+          echo "✅ Spark Assembly: $size"
+          echo "   📁 bazel-bin/spark/spark-assembly_deploy.jar"
+        else
+          echo "❌ Spark Assembly: Not found"
+          echo "   📁 Expected: bazel-bin/spark/spark-assembly_deploy.jar"
+        fi
+        
+        # Check for main component JARs (only if building all)
+        if [ "${{ inputs.build_targets }}" = "all" ]; then
+          # Aggregator
+          if [ -f "bazel-bin/aggregator/aggregator.jar" ]; then
+            size=$(ls -lh bazel-bin/aggregator/aggregator.jar | awk '{print $5}')
+            echo "✅ Aggregator: $size"
+            echo "   📁 bazel-bin/aggregator/aggregator.jar"
+          else
+            echo "❌ Aggregator: Not found"
+            echo "   📁 Expected: bazel-bin/aggregator/aggregator.jar"
+          fi
+          
+          # API Library
+          if [ -f "bazel-bin/api/api-lib.jar" ]; then
+            size=$(ls -lh bazel-bin/api/api-lib.jar | awk '{print $5}')
+            echo "✅ API Library: $size"
+            echo "   📁 bazel-bin/api/api-lib.jar"
+          else
+            echo "❌ API Library: Not found"
+            echo "   📁 Expected: bazel-bin/api/api-lib.jar"
+          fi
+          
+          # Online
+          if [ -f "bazel-bin/online/online.jar" ]; then
+            size=$(ls -lh bazel-bin/online/online.jar | awk '{print $5}')
+            echo "✅ Online: $size"
+            echo "   📁 bazel-bin/online/online.jar"
+          else
+            echo "❌ Online: Not found"
+            echo "   📁 Expected: bazel-bin/online/online.jar"
+          fi
+          
+          # Service
+          if [ -f "bazel-bin/service/libservice.jar" ]; then
+            size=$(ls -lh bazel-bin/service/libservice.jar | awk '{print $5}')
+            echo "✅ Service: $size"
+            echo "   📁 bazel-bin/service/libservice.jar"
+          elif [ -f "bazel-bin/service/service.jar" ]; then
+            size=$(ls -lh bazel-bin/service/service.jar | awk '{print $5}')
+            echo "✅ Service: $size"
+            echo "   📁 bazel-bin/service/service.jar"
+          else
+            echo "❌ Service: Not found"
+            echo "   📁 Expected: bazel-bin/service/libservice.jar or bazel-bin/service/service.jar"
+          fi
+        fi
+        
+        echo ""
+        echo "Build completed successfully! 🎉"
+
+    - name: Run Tests
+      if: ${{ inputs.run_tests }}
+      run: |
+        echo "🧪 Running Chronon tests..."
+        echo "Configuration: Java ${{ inputs.java_version }}, Scala ${{ inputs.scala_version }}"
+        echo "Test targets based on build selection: ${{ inputs.build_targets }}"
+        
+        # Set Bazel configs
+        BAZEL_CONFIGS="--config java_${{ inputs.java_version }} --config scala_${{ inputs.scala_version }} --config spark_3.5"
+        
+        # Run tests based on what was built
+        if [ "${{ inputs.build_targets }}" = "spark-assembly" ]; then
+          echo "Running tests for Spark assembly only..."
+          bazel test $BAZEL_CONFIGS //spark:test
+        else
+          echo "Running tests for all built components..."
+          bazel test $BAZEL_CONFIGS //aggregator:test //api:test //online:test //service:test //spark:test
+        fi
+        
+        echo "✅ All tests passed! 🎉"
