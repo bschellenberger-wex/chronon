@@ -24,15 +24,6 @@ lint:
 	black src
 	isort --profile black src
 image-package:
-	@if [ -z "$(CHRONON_CONFIG_PATH)" ]; then \
-	  echo "ERROR: CHRONON_CONFIG_PATH environment variable must be set to the path of your chronon config directory."; \
-	  exit 1; \
-	fi
-	@if [ -z "$(CHRONON_SPARK_JAR)" ]; then \
-	  echo "ERROR: CHRONON_SPARK_JAR environment variable must be set to the path of your Chronon Spark JAR."; \
-	  exit 1; \
-	fi
-	./prepare_docker_build_context.sh
 	./build_main_app.sh
 image-push: image-package
 	@echo "Pushing main app image to Artifactory..."

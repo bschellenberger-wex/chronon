@@ -13,6 +13,9 @@
     * [Prerequisites for Docker Builds](#prerequisites-for-docker-builds)
     * [Building the Main Chronon Docker Image](#building-the-main-chronon-docker-image)
     * [Building the EMR Spark Docker Image](#building-the-emr-spark-docker-image)
+    * [Runtime Bootstrap Process](#runtime-bootstrap-process)
+    * [Local Development: Updating a Running Container](#local-development-updating-a-running-container)
+    * [Spark Download and Verification in Dockerfile](#spark-download-and-verification-in-dockerfile)
     * [Defense Mechanisms](#defense-mechanisms)
 * [SBT Build (Not Recommended)](#sbt-build-not-recommended)
 
@@ -130,37 +133,46 @@ For more detailed information on building, testing, and dependency management, p
 
 ## Docker
 
-This section provides instructions for building and publishing the Chronon Docker image for local development and testing (to Artifactory), as well as the EMR Spark image for EMR Serverless (to ECR).
+Chronon now uses a runtime bootstrap process to fetch configuration and JAR files from S3 when the container starts. This eliminates the need to copy local configs or JARs into the Docker build context. The Docker image includes scripts in the `docker-scripts/` directory to automate this process.
 
 ### Prerequisites for Docker Builds
 
-- **Set Required Environment Variables:**
-  - `CHRONON_CONFIG_PATH`: Path to your local `chronon` configuration directory (e.g., `/path/to/aips-chronon-config/chronon`).
-  - `CHRONON_SPARK_JAR`: Path to your Chronon Spark JAR (e.g., `/path/to/bazel-bin/spark/spark-assembly_deploy.jar`).
+Before building or running Chronon Docker containers, consider which workflow you will use:
+
+- **Building the Docker Image:**
+  - No S3 credentials or environment variables are required to build the Docker image itself. The image can be built without access to S3 or any runtime configuration.
+
+- **Running the Container with S3 Bootstrap (Optional):**
+  - If you want the container to automatically download configs and JARs from S3 at runtime (using the bootstrap process), you must provide AWS credentials and set the following environment variables:
+    - `S3_BUCKET_NAME`: Name of the S3 bucket containing Chronon configs and JARs.
+    - `S3_CONFIG_PATH`: Path within the bucket to the Chronon config zips.
+    - `S3_CHRONON_DRIVER_JAR_PATH`: Path within the bucket to the Chronon driver JAR.
+    - `S3_CHRONON_DRIVER_JAR_FILENAME`: Name of the JAR file to download.
+    - (Optional) `CHRONON_CONFIG_ZIP_OVERRIDE`: Override the config zip file name if you don't want to use latest configs.
+    - (Optional) `DRIVER_JAR_PATH`: Override the default location where the downloaded JAR is stored (default is `/srv/chronon/jars/spark_embedded.jar`).
+  - These are only required if you want to use the automated S3 bootstrap process at container startup.
+
+- **Local Development / Manual Config & JAR Injection:**
+  - If you prefer to manually inject configs and JARs (e.g., for local development or testing), you can use the `update_chronon_container.sh` script. In this case, S3 credentials and environment variables are not required.
+
 - **Authenticate to Registries Before Pushing:**
   - For Artifactory: `docker login usartifactorywexinc.jfrog.io -u {wexid}`
-    - When prompted for a password, use your Artifactory API Key.
+    - Use your Artifactory API Key as the password.
   - For ECR: `aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 975049916663.dkr.ecr.us-east-1.amazonaws.com`
 
 ### Building the Main Chronon Docker Image
 
-1. **Prepare the Build Context**
+1. **Build the Image**
 
-   The `prepare_docker_build_context.sh` script copies the Chronon Spark JAR and your local Chronon configurations into the Docker build context. You must set the required environment variables before running the build:
+   The Docker build no longer requires local config or JAR injection. The image will fetch these at runtime. Simply run:
 
    ```bash
-   export CHRONON_CONFIG_PATH=/path/to/aips-chronon-config/chronon
-   export CHRONON_SPARK_JAR=/path/to/bazel-bin/spark/spark-assembly_deploy.jar
    make image-package
    ```
 
-   The Makefile will check for these environment variables and fail early if they are not set.
+   The Makefile will build the Docker image using the tag from the `VERSION` file.
 
-2. **Build the Image**
-
-   The `image-package` target will run the build scripts and produce a Docker image tagged for Artifactory. The tag is always read from the `VERSION` file—passing a tag as an argument is not allowed and will result in an error.
-
-3. **Push the Image (Release Only)**
+2. **Push the Image (Release Only)**
 
    Only strict semantic version tags (e.g., `1.2.3`) can be pushed. The Makefile will block pushes for SNAPSHOT or non-semver tags, and will also prevent overwriting existing tags in Artifactory.
 
@@ -174,19 +186,17 @@ This section provides instructions for building and publishing the Chronon Docke
 
 1. **Build the Image**
 
-   The EMR Spark image can be built using the Makefile target (recommended):
+   The EMR Spark image can be built using the Makefile target:
 
    ```bash
    make image-package-emr-spark
    ```
 
-   Alternatively, you can use the `build_emr_spark.sh` script directly. The script will always use the tag specified in the `VERSION.emr-spark` file:
+   Or use the `build_emr_spark.sh` script directly. The tag is specified in the `VERSION.emr-spark` file:
 
    ```bash
    ./build_emr_spark.sh 975049916663 us-east-1 chronon-spark-emr
    ```
-
-   Any tag is allowed for building, but only strict semantic version tags (e.g., `1.2.3`) can be pushed to ECR.
 
 2. **Push the Image (Release Only)**
 
@@ -197,6 +207,40 @@ This section provides instructions for building and publishing the Chronon Docke
    ```
 
    **Note:** Authenticate to ECR before pushing.
+
+### Runtime Bootstrap Process
+
+The container does not automatically run the bootstrap process by default. In production (e.g., Kubernetes), your deployment should be configured to invoke the `docker-scripts/bootstrap.sh` script as the container entrypoint or command. This script will:
+
+- Call `pull_chronon_configs.sh` to download the latest Chronon config zip from S3 and unzip it to `/srv/chronon/configs`.
+- Call `pull_chronon_driver_jar.sh` to download the Chronon driver JAR from S3 to `/srv/chronon/jars/spark_embedded.jar` (or as specified).
+- Launch the orchestrator.
+
+If you shell into a running container, you can also manually invoke the bootstrap process by running:
+
+```bash
+/srv/chronon/bootstrap.sh
+```
+
+All required environment variables must be set for these scripts to function.
+
+### Local Development: Updating a Running Container
+
+For local development, you can use the `update_chronon_container.sh` script to manually inject a JAR or configuration files into a running Chronon Docker container, bypassing the S3 bootstrap process. This is useful for rapid iteration and testing.
+
+```bash
+./update_chronon_container.sh [path_to_jar] [path_to_configs] [container_name_or_id]
+```
+
+- All arguments are optional. If not specified, the script will attempt to find a running container named `main` or `chronon`.
+- You can provide a path to a JAR, a configs directory or zip, and a container name or ID.
+
+### Spark Download and Verification in Dockerfile
+
+The Dockerfile now downloads and verifies the Spark distribution at build time:
+- Uses a persistent build cache to avoid repeated downloads.
+- Verifies Spark authenticity using PGP signatures and integrity using SHA512 checksums.
+- See the Dockerfile for details on the verification steps.
 
 ### Defense Mechanisms
 
