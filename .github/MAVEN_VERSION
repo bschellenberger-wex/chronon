@@ -1,0 +1,7 @@
+# AIPS Chronon Maven Artifact Version Configuration
+
+# Base version for AIPS Chronon fork - increment for major changes
+base_version=0.0.1
+
+# Maven group ID for WEX
+group_id=com.wex.chronon

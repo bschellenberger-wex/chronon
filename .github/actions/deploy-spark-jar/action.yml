@@ -1,0 +1,25 @@
+name: "Deploy Spark Assembly JAR to S3"
+description: "Package and upload spark-assembly JAR to S3 with optional dry-run and debug"
+
+inputs:
+  bucket:
+    description: "Target S3 bucket"
+    required: true
+  prefix:
+    description: "S3 prefix for JAR files"
+    required: false
+    default: "chronon-driver-jars"
+  dry_run:
+    description: "Dry run (no S3 upload)"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Deploy via Makefile
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "🔗 Delegating S3 deployment to Makefile..."
+        make deploy-spark-jar-s3 S3_BUCKET="${{ inputs.bucket }}" S3_PREFIX="${{ inputs.prefix }}" DRY_RUN="${{ inputs.dry_run }}"

@@ -1,0 +1,49 @@
+name: 'Setup Thrift from Source'
+description: 'Downloads, builds, and installs Thrift 0.13 from source, with caching.'
+runs:
+  using: "composite"
+  steps:
+    - name: Cache Thrift installation
+      id: cache-thrift
+      uses: actions/cache@v4
+      with:
+        path: /usr/local/bin/thrift
+        key: ${{ runner.os }}-thrift-0.13.0-v1
+
+    - name: Cache Thrift source archive
+      id: cache-thrift-archive
+      uses: actions/cache@v4
+      with:
+        path: thrift_build/thrift.tar.gz
+        key: ${{ runner.os }}-thrift-archive-0.13.0-v1
+
+    - name: Install Thrift 0.13
+      if: steps.cache-thrift.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        echo "🔧 Installing Thrift 0.13 from source..."
+        mkdir -p thrift_build && cd thrift_build
+        THRIFT_HTTP_ARCHIVE=https://archive.apache.org/dist/thrift/0.13.0/thrift-0.13.0.tar.gz
+        THRIFT_ARCHIVE=thrift.tar.gz
+        THRIFT_EXPECTED_CHECKSUM_SHA256=7ad348b88033af46ce49148097afe354d513c1fca7c607b59c33ebb6064b5179
+
+        if [ ! -f "$THRIFT_ARCHIVE" ]; then
+            wget "$THRIFT_HTTP_ARCHIVE" -O "$THRIFT_ARCHIVE"
+        fi
+
+        sha256sum -c <(echo "$THRIFT_EXPECTED_CHECKSUM_SHA256  $THRIFT_ARCHIVE")
+
+        rm -rf src && mkdir src && tar zxf thrift.tar.gz -C src --strip-components=1 && cd src
+
+        sudo apt update
+        sudo apt install -y build-essential libssl-dev pkg-config flex bison
+        ./configure --without-cpp --without-java --without-python --without-py3 --without-ruby --without-haskell --without-erlang --without-perl --without-php --without-php_extension --without-c_glib --without-csharp --without-go --without-nodejs --without-lua --without-qt5 --without-dart --without-swift --without-js --without-d --without-haxe --without-cl --without-as3 --without-dotnetcore --without-netstd --without-rs
+        make
+        sudo make install
+        
+        thrift_version=$(thrift --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        if [[ "$thrift_version" != 0.13.* ]]; then
+          echo "❌ Error: Expected Thrift 0.13.x but got $thrift_version" >&2
+          exit 1
+        fi
+        echo "✅ Thrift 0.13 installation confirmed."
