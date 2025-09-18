@@ -22,18 +22,20 @@ on:
 
 jobs:
   deploy:
-    runs-on: ${{ inputs.environment }}
-    environment: ${{ inputs.environment }}
+    # Use the correct self-hosted runner naming pattern
+    runs-on: ai-platform-${{ inputs.environment }}-${{ inputs.aws_region == 'us-east-1' && 'ue1' || 'uw2' }}
     env:
       AWS_REGION: ${{ inputs.aws_region }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+
       - name: Download built Chronon JARs
         uses: actions/download-artifact@v4
         with:
           name: chronon-bazel-jars
           path: chronon-artifacts
+
       - name: Deploy Spark Assembly JAR to S3
         uses: ./.github/actions/deploy-spark-jar
         with:

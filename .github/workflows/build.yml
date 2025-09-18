@@ -86,7 +86,7 @@ jobs:
           cd chronon-artifacts
           find . -name "*.jar.sha256" -exec sha256sum -c {} \;
           echo "✅ All JAR checksums verified successfully"
-          
+
       - name: Display Artifact Manifest
         run: |
           echo "📋 Artifact manifest:"
@@ -116,24 +116,13 @@ jobs:
     needs: [build, publish]
     strategy:
       matrix:
-        include:
-          - environment: ai-platform-dev
-            bucket: ai-chronon-emr-serverless-resources-dev
-            aws_region: us-east-1
-          - environment: ai-platform-dev
-            bucket: ai-chronon-emr-serverless-resources-dev-uw2
-            aws_region: us-west-2
-#          - environment: ai-platform-stage
-#            bucket: ai-chronon-emr-serverless-resources-stage
-#            aws_region: us-east-1
-#          - environment: ai-platform-prod
-#            bucket: ai-chronon-emr-serverless-resources-prod
-#            aws_region: us-east-1
-          # Add more regions/environments here as needed
+        environment: [dev, stage, prod]
+        aws_region: [us-east-1, us-west-2]
     uses: ./.github/workflows/deploy-spark-jar.yml
     with:
       environment: ${{ matrix.environment }}
-      bucket: ${{ matrix.bucket }}
+      # We append uw2 suffix for us-west-2 buckets, none for us-east-1
+      bucket: ai-chronon-emr-serverless-resources-${{ matrix.environment }}${{ matrix.aws_region == 'us-west-2' && '-uw2' || '' }}
       prefix: chronon-driver-jars
-      dry_run: ${{ format('{0}', github.event.inputs.dry_run) }}
+      dry_run: ${{ github.event.inputs.dry_run }}
       aws_region: ${{ matrix.aws_region }}
