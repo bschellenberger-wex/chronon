@@ -7,8 +7,8 @@ USER root
 # The following is required only for local Docker builds, to allow yum and pip to trust your organization's Root CA.
 # This will be removed once CI/CD is set up to handle trusted builds.
 # Do NOT include this in production images unless the image needs to access internal resources at runtime.
-COPY nscacert.pem.crt /etc/pki/ca-trust/source/anchors/
-RUN update-ca-trust
+# COPY nscacert.pem.crt /etc/pki/ca-trust/source/anchors/
+# RUN update-ca-trust
 
 # === INSTALL DEPENDENCIES ===
 # Copy requirements file

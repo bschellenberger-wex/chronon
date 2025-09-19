@@ -1,33 +1,59 @@
 # Use bash for all shell commands
 SHELL := /bin/bash
 
-# Main app image (Artifactory)
+# Main app image (Artifactory) - Now handled by GitHub Actions
 ARTIFACTORY_REGISTRY_URL := usartifactorywexinc.jfrog.io
-MAIN_APP_IMAGE_NAME := ai-platform-docker-subprod/chronon-app
-MAIN_APP_VERSION := $(shell cat VERSION 2>/dev/null)
+MAIN_APP_IMAGE_NAME := ai-platform-docker-subprod/chronon-orchestrator
+MAIN_APP_VERSION := $(shell cat VERSION 2>/dev/null | tr -d '[:space:]')
 ifeq ($(strip $(MAIN_APP_VERSION)),)
 $(error VERSION file must exist and contain a version string (e.g., 0.0.1-SNAPSHOT))
 endif
 MAIN_APP_TAG ?= $(MAIN_APP_VERSION)
 MAIN_APP_IMAGE_URL := ${ARTIFACTORY_REGISTRY_URL}/${MAIN_APP_IMAGE_NAME}:${MAIN_APP_TAG}
 
-# EMR Spark image (ECR)
+# EMR Spark image (ECR) - Now handled by GitHub Actions
 ECR_REGISTRY_URL := 975049916663.dkr.ecr.us-east-1.amazonaws.com
 EMR_SPARK_IMAGE_NAME := chronon-spark-emr
-EMR_SPARK_VERSION := $(shell cat VERSION.emr-spark 2>/dev/null)
+EMR_SPARK_VERSION := $(shell cat VERSION.emr-spark 2>/dev/null | tr -d '[:space:]')
 ifeq ($(strip $(EMR_SPARK_VERSION)),)
 $(error VERSION.emr-spark file must exist and contain a version string (e.g., 0.0.1-SNAPSHOT))
 endif
 EMR_SPARK_TAG ?= $(EMR_SPARK_VERSION)
 EMR_SPARK_IMAGE_URL := ${ECR_REGISTRY_URL}/${EMR_SPARK_IMAGE_NAME}:${EMR_SPARK_TAG}
 
-.PHONY: lint image-package image-push local-run docker-shell compose-up print-image-info image-package-emr-spark image-push-emr-spark build test prepare-artifacts list-jars promote-artifacts promote-to-subprod promote-to-prod
+.PHONY: lint image-package image-push local-run docker-shell compose-up print-image-info build test prepare-artifacts list-jars promote-artifacts promote-to-subprod promote-to-prod
 lint:
 	echo "👕 lint"
 	black src
 	isort --profile black src
-# NOTE: these are legacy commands that will get refactored when we automate the build process for the Dockerfiles.
-image-package:
+# NOTE: Docker build/push is now handled by GitHub Actions workflows
+# These targets are kept for local development and testing only
+
+# Download Spark file from Artifactory for local builds
+download-spark:
+	@echo "📥 Downloading Spark from Artifactory..."
+	@if [ ! -f "spark-3.5.5-bin-hadoop3.tgz" ]; then \
+		jf rt download ai-platform-generic-subprod/spark/spark-3.5.5-bin-hadoop3.tgz ./ --flat; \
+		echo "✅ Spark downloaded successfully"; \
+	else \
+		echo "✅ Spark file already exists, skipping download"; \
+	fi
+
+# Download Scala .deb from Artifactory for local builds
+SCALA_DEB_FILENAME := scala-2.12.20.deb
+SCALA_DEB_PATH := ./$(SCALA_DEB_FILENAME)
+SCALA_ARTIFACTORY_PATH := ai-platform-generic/scala/2.12.20/scala-2.12.20.deb
+
+download-scala:
+	@echo "📥 Downloading Scala from Artifactory..."
+	@if [ ! -f "$(SCALA_DEB_PATH)" ]; then \
+		jf rt download $(SCALA_ARTIFACTORY_PATH) ./ --flat; \
+		echo "✅ Scala downloaded successfully"; \
+	else \
+		echo "✅ Scala file already exists, skipping download"; \
+	fi
+
+image-package: download-spark download-scala
 	./build_main_app.sh
 image-push: image-package
 	@echo "Pushing main app image to Artifactory..."
@@ -60,20 +86,61 @@ print-emr-spark-image:
 	@echo "Tag: ${EMR_SPARK_TAG}"
 	@echo "Full image URL: ${EMR_SPARK_IMAGE_URL}"
 
-image-package-emr-spark:
-	./build_emr_spark.sh $(ECR_REGISTRY_URL) us-east-1 $(EMR_SPARK_IMAGE_NAME)
+# ==============================================================================
+# EMR SPARK IMAGE PUBLISHING (Refactored for CI/CD)
+# ==============================================================================
 
-image-push-emr-spark: image-package-emr-spark
-	@echo "Pushing EMR Spark image to ECR..."
-	@if ! echo ${EMR_SPARK_TAG} | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
-	  echo "ERROR: VERSION.emr-spark must use semantic versioning (e.g., 0.0.1) for push. SNAPSHOT and non-semver tags are not allowed."; \
+# AWS Configuration - these are defaults and are expected to be overridden by CI
+AWS_REGION ?= us-east-1
+AWS_ACCOUNT_ID ?= 975049916663
+
+# Target to build the EMR spark image locally. Called by the `build-image` CI job.
+.PHONY: build-emr-spark
+build-emr-spark:
+	@echo "🏗️ Building EMR Spark image..."
+	@echo "Image Name: $(EMR_SPARK_IMAGE_NAME)"
+	@echo "Version Tag: $(EMR_SPARK_TAG)"
+	docker buildx build \
+		--platform linux/amd64 \
+		--file emr-spark.Dockerfile \
+		--tag $(EMR_SPARK_IMAGE_NAME):$(EMR_SPARK_TAG) \
+		--load \
+		.
+	@echo "✅ Successfully built and loaded local image: $(EMR_SPARK_IMAGE_NAME):$(EMR_SPARK_TAG)"
+
+# A reusable helper target for ECR authentication.
+.PHONY: ecr-login
+ecr-login:
+	@echo "🔐 Logging into ECR for Account: $(AWS_ACCOUNT_ID) in Region: $(AWS_REGION)..."
+	@aws ecr get-login-password --region $(AWS_REGION) | \
+		docker login --username AWS --password-stdin "$(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com"
+	@echo "✅ ECR login successful."
+
+# Target to publish the EMR spark image to a specific region.
+# Called by the matrix strategy in the `publish` CI job.
+# Assumes the image has already been built and loaded.
+.PHONY: publish-emr-spark-to-region
+publish-emr-spark-to-region: ecr-login
+	@echo "🚀 Publishing to Account: $(AWS_ACCOUNT_ID) in Region: $(AWS_REGION)..."
+	@ECR_IMAGE_URI="$(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/$(EMR_SPARK_IMAGE_NAME):$(EMR_SPARK_TAG)"; \
+	echo "Full Image URI: $$ECR_IMAGE_URI"; \
+	\
+	if ! echo ${EMR_SPARK_TAG} | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
+	  echo "ERROR: VERSION.emr-spark must use semantic versioning (e.g., 0.0.1) for push. SNAPSHOT tags are not allowed. Found: ${EMR_SPARK_TAG}" >&2; \
 	  exit 1; \
 	fi; \
-	if docker manifest inspect ${EMR_SPARK_IMAGE_URL} > /dev/null 2>&1; then \
-	  echo "ERROR: Image ${EMR_SPARK_IMAGE_URL} already exists in ECR. Aborting push to prevent overwrite."; \
+	\
+	echo "🏷️ Tagging local image for ECR..."; \
+	docker tag $(EMR_SPARK_IMAGE_NAME):$(EMR_SPARK_TAG) $$ECR_IMAGE_URI; \
+	\
+	echo "🔎 Checking if image already exists in ECR..."; \
+	if docker manifest inspect $$ECR_IMAGE_URI > /dev/null 2>&1; then \
+	  echo "ERROR: Image $$ECR_IMAGE_URI already exists in ECR. Aborting push to prevent overwrite." >&2; \
 	  exit 1; \
 	else \
-	  docker push ${EMR_SPARK_IMAGE_URL}; \
+	  echo "📦 Pushing image to ECR..."; \
+	  docker push $$ECR_IMAGE_URI; \
+	  echo "✅ Successfully pushed $$ECR_IMAGE_URI"; \
 	fi
 
 # Build configuration
@@ -86,7 +153,7 @@ GROUP_ID := $(shell source .github/MAVEN_VERSION && echo $$group_id)
 # Usage: make build SERVER_JAVABASE=$JAVA_HOME
 # Usage: make build SERVER_JAVABASE=/path/to/java
 # Usage: make test SERVER_JAVABASE=$JAVA_HOME
-SERVER_JAVABASE ?= 
+SERVER_JAVABASE ?=
 BAZEL_SERVER_FLAGS := $(if $(SERVER_JAVABASE),--server_javabase=$(SERVER_JAVABASE),)
 
 # Define JAR targets - easily extensible for future JARs
@@ -386,3 +453,4 @@ _copy-to-prod:
 		  echo "    ✅ Completed copying $$ARTIFACT_ID"; \
 	   fi; \
 	done < chronon-artifacts/ARTIFACT_MANIFEST.txt
+

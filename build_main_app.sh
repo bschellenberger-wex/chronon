@@ -1,13 +1,14 @@
 #!/bin/bash
 # Usage: ./build_main_app.sh
 # Example: ./build_main_app.sh
+# This script builds the main application Docker image for Chronon Orchestrator.
 #
 # Tag is always read from VERSION file. Passing a tag as an argument is not allowed.
 
 set -euo pipefail
 
 ARTIFACTORY_REGISTRY_URL="usartifactorywexinc.jfrog.io"
-MAIN_APP_IMAGE_NAME="ai-platform-docker-subprod/chronon-app"
+MAIN_APP_IMAGE_NAME="ai-platform-docker-subprod/chronon-orchestrator"
 
 if [ "$#" -ne 0 ]; then
   echo "ERROR: No arguments allowed. Tag is always read from VERSION file." >&2

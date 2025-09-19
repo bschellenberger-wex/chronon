@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     thrift-compiler \
     && update-ca-certificates \
-    # Install AWS CLI v2 (official installer, works for both ARM and x86)
+    # Install AWS CLI v2 (official installer, works for both ARM and x86) \
     && ARCH=$(uname -m) \
     && if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
         curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "/tmp/awscliv2.zip"; \
@@ -31,9 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Set versions as environment variables for easy updates
 ENV SCALA_VERSION="2.12.20"
 
-
-# Install Scala
-ADD "https://downloads.lightbend.com/scala/${SCALA_VERSION}/scala-${SCALA_VERSION}.deb" /tmp/scala.deb
+# Copy Scala .deb from build context (downloaded by Makefile)
+COPY scala-2.12.20.deb /tmp/scala.deb
 RUN apt-get update && apt-get install -y --allow-downgrades /tmp/scala.deb && \
     rm /tmp/scala.deb
 
@@ -50,56 +49,23 @@ WORKDIR ${SPARK_HOME}
 ENV SPARK_VERSION="3.5.5"
 # Note: The spark distribution for 3.5.x is just hadoop3, not a specific version like 3.2
 ENV HADOOP_VERSION="3"
-# Set the cache downloads path for reuse
-ENV CACHE_DOWNLOADS_PATH="/cache/downloads"
+# Spark download configuration
 
 # Set the Spark filename for reuse
 ENV SPARK_FILENAME="spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz"
 
-# Step 1: Acquire Spark using the persistent cache, or download if missing.
-RUN --mount=type=cache,target=${CACHE_DOWNLOADS_PATH} \
-    if [ -f "${CACHE_DOWNLOADS_PATH}/${SPARK_FILENAME}" ]; then \
-        echo "✓ CACHE HIT: Using cached Spark file from previous download." && \
-        cp "${CACHE_DOWNLOADS_PATH}/${SPARK_FILENAME}" "/tmp/${SPARK_FILENAME}"; \
-    else \
-        echo "CACHE MISS: Downloading Spark for the first time..." && \
-        curl -L "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_FILENAME}" -o "/tmp/${SPARK_FILENAME}" && \
-        echo "💾 Saving Spark file to cache for future builds..." && \
-        cp "/tmp/${SPARK_FILENAME}" "${CACHE_DOWNLOADS_PATH}/${SPARK_FILENAME}"; \
-    fi
+# Step 1: Copy Spark file from build context (downloaded by Makefile)
+COPY ${SPARK_FILENAME} /tmp/${SPARK_FILENAME}
 
-# Step 2: Verify Spark Authenticity (PGP) and Integrity (SHA512)
-RUN \
-    echo "🔎 Downloading verification files..." && \
-    curl -L "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_FILENAME}.sha512" -o "/tmp/${SPARK_FILENAME}.sha512" && \
-    curl -L "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_FILENAME}.asc" -o "/tmp/${SPARK_FILENAME}.asc" && \
-    curl -L "https://downloads.apache.org/spark/KEYS" -o "/tmp/KEYS" && \
-    echo "🔑 Importing PGP keys..." && \
-    gpg --import /tmp/KEYS && \
-    echo "🔐 Verifying PGP signature (authenticity)..." && \
-    gpg --verify "/tmp/${SPARK_FILENAME}.asc" "/tmp/${SPARK_FILENAME}"
-
-WORKDIR /tmp
-
-RUN \
-    echo "🧮 Verifying SHA512 checksum (integrity)..." && \
-    if sha512sum -c "${SPARK_FILENAME}.sha512"; then \
-        echo "✓ SHA512 checksum PASSED"; \
-    else \
-        echo "✗ Verification FAILED!"; \
-        exit 1; \
-    fi
-
+# Step 2: Extract and install Spark
 WORKDIR ${SPARK_HOME}
 
-# Step 3: Extract Spark and clean up
 RUN \
     echo "📦 Extracting Spark..." && \
     tar xzf "/tmp/${SPARK_FILENAME}" --directory /opt/spark --strip-components 1 && \
-    echo "🧹 Cleaning up temporary files and keyring..." && \
+    echo "🧹 Cleaning up temporary files..." && \
     rm -rf /tmp/${SPARK_FILENAME}* && \
-    rm -f /tmp/KEYS && \
-    rm -rf /root/.gnupg
+    echo "✅ Spark installed successfully"
 
 # Create a non-root user and group for running Chronon
 RUN groupadd --gid 1001 chronon \

@@ -17,6 +17,9 @@
     * [Local Development: Updating a Running Container](#local-development-updating-a-running-container)
     * [Spark Download and Verification in Dockerfile](#spark-download-and-verification-in-dockerfile)
     * [Defense Mechanisms](#defense-mechanisms)
+* [Continuous Integration and Deployment (CI/CD)](#continuous-integration-and-deployment-cicd)
+    * [GitHub Actions Workflows](#github-actions-workflows)
+    * [Local Development: Building and Testing Docker Images](#local-development-building-and-testing-docker-images)
 * [SBT Build (Not Recommended)](#sbt-build-not-recommended)
 
 This document outlines the process for building Chronon artifacts at WEX. Due to specific version requirements for Spark, it's necessary to build Chronon from source to ensure compatibility.
@@ -139,7 +142,10 @@ Chronon now uses a runtime bootstrap process to fetch configuration and JAR file
 
 Before building or running Chronon Docker containers, consider which workflow you will use:
 
-- **Building the Docker Image:**
+- **Building the Docker Image (Local Development):**
+  - The Docker build now expects Scala and Spark artifacts to be present in the build context. Use the Makefile targets to download these from Artifactory:
+    - `make download-scala`
+    - `make download-spark`
   - No S3 credentials or environment variables are required to build the Docker image itself. The image can be built without access to S3 or any runtime configuration.
 
 - **Running the Container with S3 Bootstrap (Optional):**
@@ -162,7 +168,16 @@ Before building or running Chronon Docker containers, consider which workflow yo
 
 ### Building the Main Chronon Docker Image
 
-1. **Build the Image**
+1. **Download Required Artifacts (Local Development Only)**
+
+   Before building, download Scala and Spark artifacts from Artifactory:
+
+   ```bash
+   make download-scala
+   make download-spark
+   ```
+
+2. **Build the Image (Local Development Only)**
 
    The Docker build no longer requires local config or JAR injection. The image will fetch these at runtime. Simply run:
 
@@ -172,41 +187,34 @@ Before building or running Chronon Docker containers, consider which workflow yo
 
    The Makefile will build the Docker image using the tag from the `VERSION` file.
 
-2. **Push the Image (Release Only)**
+3. **Push the Image (Release Only, via CI/CD)**
 
    Only strict semantic version tags (e.g., `1.2.3`) can be pushed. The Makefile will block pushes for SNAPSHOT or non-semver tags, and will also prevent overwriting existing tags in Artifactory.
 
-   ```bash
-   make image-push
-   ```
-
-   **Note:** Authenticate to Artifactory before pushing.
+   > **Note:** Image pushes are now handled by GitHub Actions workflows. Local pushes are for development only.
 
 ### Building the EMR Spark Docker Image
 
-1. **Build the Image**
+1. **Download Required Artifacts (Local Development Only)**
+
+   ```bash
+   make download-scala
+   make download-spark
+   ```
+
+2. **Build the Image (Local Development Only)**
 
    The EMR Spark image can be built using the Makefile target:
 
    ```bash
-   make image-package-emr-spark
+   make build-emr-spark
    ```
 
-   Or use the `build_emr_spark.sh` script directly. The tag is specified in the `VERSION.emr-spark` file:
+   The tag is specified in the `VERSION.emr-spark` file.
 
-   ```bash
-   ./build_emr_spark.sh 975049916663 us-east-1 chronon-spark-emr
-   ```
+3. **Push the Image (Release Only, via CI/CD)**
 
-2. **Push the Image (Release Only)**
-
-   The Makefile's `image-push-emr-spark` target enforces semantic versioning and will block pushes for SNAPSHOT or non-semver tags, and will prevent overwriting existing tags in ECR.
-
-   ```bash
-   make image-push-emr-spark
-   ```
-
-   **Note:** Authenticate to ECR before pushing.
+   > **Note:** Image pushes are now handled by GitHub Actions workflows. Local pushes are for development only.
 
 ### Runtime Bootstrap Process
 
@@ -237,16 +245,48 @@ For local development, you can use the `update_chronon_container.sh` script to m
 
 ### Spark Download and Verification in Dockerfile
 
-The Dockerfile now downloads and verifies the Spark distribution at build time:
-- Uses a persistent build cache to avoid repeated downloads.
-- Verifies Spark authenticity using PGP signatures and integrity using SHA512 checksums.
-- See the Dockerfile for details on the verification steps.
+The Dockerfile now expects Scala and Spark artifacts to be present in the build context, downloaded via the Makefile. Verification steps (PGP/SHA) are no longer performed in the Dockerfile. See the Makefile for details on artifact download.
 
 ### Defense Mechanisms
 
 Both the Makefile and build scripts include defense mechanisms to prevent accidental overwriting of existing tags in Artifactory and ECR. If you attempt to push a tag that already exists, the push will be blocked and an error will be shown.
 
 For more details on the build and push process, see the comments in the Makefile and scripts.
+
+## Continuous Integration and Deployment (CI/CD)
+
+Chronon now uses GitHub Actions workflows to build and publish Docker images for both the main orchestrator and EMR Spark components. This ensures consistent, secure, and automated deployment to Artifactory and AWS ECR across all environments.
+
+### GitHub Actions Workflows
+
+- **Main Chronon Orchestrator Image:**
+  - Workflow: `.github/workflows/publish-chronon-orchestrator.yml`
+  - Builds the Docker image using the Makefile and publishes to Artifactory.
+  - Supports promotion to production via workflow dispatch input.
+  - Uses semantic version tags from the `VERSION` file.
+
+- **EMR Spark Image:**
+  - Workflow: `.github/workflows/publish-spark-emr.yml`
+  - Builds the EMR Spark Docker image and publishes to AWS ECR.
+  - Uses a matrix strategy to publish to multiple AWS accounts and regions (dev, stage, prod; us-east-1, us-west-2).
+  - Uses semantic version tags from the `VERSION.emr-spark` file.
+
+- **Versioning:**
+  - Only strict semantic version tags (e.g., `0.0.1`) are allowed for pushes. SNAPSHOT tags are blocked.
+  - The workflows prevent overwriting existing tags in Artifactory and ECR.
+
+### Local Development: Building and Testing Docker Images
+
+- Local builds are supported for development and testing only. Use the Makefile targets to download required artifacts and build images.
+- Pushing images to registries should be done via CI/CD workflows. Local pushes are blocked for non-semver tags and if the tag already exists.
+- For EMR Spark, use:
+  ```bash
+  make build-emr-spark
+  ```
+- For the main orchestrator, use:
+  ```bash
+  make image-package
+  ```
 
 ## SBT Build (Not Recommended)
 

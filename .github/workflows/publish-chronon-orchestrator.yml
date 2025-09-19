@@ -1,0 +1,57 @@
+name: Publish Chronon Orchestrator
+
+on:
+  workflow_dispatch:
+    inputs:
+      promote_to_prod:
+        description: 'Promote to production'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build-and-publish:
+    runs-on: ai-platform-dev
+    outputs:
+      image_tag: ${{ steps.get-version.outputs.image_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup JFrog CLI
+        uses: wexinc/shared-actions/fabric/artifactory-cli@v1
+
+      - name: Get image tag from VERSION file or fallback to SHA
+        id: get-version
+        run: |
+          if [ -f VERSION ]; then
+            TAG=$(cat VERSION | tr -d '\n')
+          else
+            TAG=${GITHUB_SHA}
+          fi
+          echo "image_tag=$TAG" >> $GITHUB_OUTPUT
+          echo "📋 Using image tag: $TAG"
+
+      - name: Build Docker image using Makefile
+        run: make image-package
+
+      - name: Build and Publish Docker Image to Artifactory (Nonprod)
+        uses: wexinc/shared-actions/fabric/artifactory-docker-deploy@v1
+        with:
+          artifactory_url: usartifactorywexinc.jfrog.io
+          image_name: chronon-orchestrator
+          image_tag: ${{ steps.get-version.outputs.image_tag }}
+          push_latest: true
+
+  promote-to-prod:
+    runs-on: ai-platform-dev
+    needs: build-and-publish
+    if: github.event.inputs.promote_to_prod == 'true'
+    steps:
+      - name: Promote Docker Image to Production Artifactory
+        uses: wexinc/shared-actions/fabric/artifactory-docker-promote@v1
+        with:
+          image_name: chronon-orchestrator
+          source_tag: ${{ needs.build-and-publish.outputs.image_tag }}
+          target_tag: ${{ needs.build-and-publish.outputs.image_tag }}
+          copy: 'true'

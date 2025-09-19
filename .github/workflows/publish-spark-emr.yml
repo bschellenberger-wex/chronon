@@ -1,0 +1,64 @@
+name: Publish Spark EMR Image
+
+on:
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: chronon-spark-emr
+
+jobs:
+  # Build the Docker image once
+  build-image:
+    runs-on: ubuntu-latest
+    outputs:
+      image-version: ${{ steps.read-version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64
+
+      - name: Read version from VERSION.emr-spark file
+        id: read-version
+        run: |
+          VERSION=$(cat VERSION.emr-spark | tr -d '\n')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📋 Version: $VERSION"
+
+      - name: Build Docker image
+        run: make build-emr-spark
+
+      - name: Save Docker image
+        run: |
+          VERSION=$(cat VERSION.emr-spark | tr -d '\n')
+          docker save ${{ env.IMAGE_NAME }}:$VERSION | gzip > image.tar.gz
+          echo "💾 Saved Docker image to tar.gz"
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar.gz
+          compression-level: '1'
+          retention-days: 1
+
+  publish-dev:
+    needs: build-image
+    uses: ./.github/workflows/publish-emr-spark-to-env.yml
+    with:
+      environment: dev
+
+  publish-stage:
+    needs: publish-dev
+    uses: ./.github/workflows/publish-emr-spark-to-env.yml
+    with:
+      environment: stage
+
+  publish-prod:
+    needs: publish-stage
+    uses: ./.github/workflows/publish-emr-spark-to-env.yml
+    with:
+      environment: prod
