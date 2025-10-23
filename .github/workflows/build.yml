@@ -125,4 +125,3 @@ jobs:
       bucket: ai-chronon-emr-serverless-resources-${{ matrix.environment }}${{ matrix.aws_region == 'us-west-2' && '-uw2' || '' }}
       prefix: chronon-driver-jars
       dry_run: ${{ github.event.inputs.dry_run }}
-      aws_region: ${{ matrix.aws_region }}

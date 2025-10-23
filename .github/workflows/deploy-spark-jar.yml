@@ -16,16 +16,11 @@ on:
         required: false
         type: string
         default: false
-      aws_region:
-        required: true
-        type: string
 
 jobs:
   deploy:
     # Use the correct self-hosted runner naming pattern
-    runs-on: ai-platform-${{ inputs.environment }}-${{ inputs.aws_region == 'us-east-1' && 'ue1' || 'uw2' }}
-    env:
-      AWS_REGION: ${{ inputs.aws_region }}
+    runs-on: ai-platform-${{ inputs.environment }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

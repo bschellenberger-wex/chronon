@@ -1,9 +1,10 @@
 name: 'Publish EMR Spark to Env'
-description: 'Publishes the EMR Spark Docker image to ECR for a given region and runner'
+description: 'Publishes the EMR Spark Docker image to ECR for all regions'
 inputs:
-  aws-region:
-    description: 'AWS region'
-    required: true
+  regions:
+    description: 'Comma-separated list of AWS regions to publish to'
+    required: false
+    default: 'us-east-1,us-west-2'
 runs:
   using: "composite"
   steps:
@@ -18,16 +19,9 @@ runs:
         gunzip -c image.tar.gz | docker load
         echo "📦 Loaded Docker image"
 
-    - name: Get AWS Account ID
-      id: aws-account
+    - name: Publish to ECR (All Regions)
       shell: bash
       run: |
-        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-        echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
-
-    - name: Publish to ECR
-      shell: bash
-      run: |
-        make publish-emr-spark-to-region \
-          AWS_ACCOUNT_ID=${{ steps.aws-account.outputs.account_id }} \
-          AWS_REGION=${{ inputs.aws-region }}
+        # Convert comma-separated regions to space-separated for Makefile
+        REGIONS=$(echo "${{ inputs.regions }}" | tr ',' ' ')
+        make publish-emr-spark REGIONS="$REGIONS"

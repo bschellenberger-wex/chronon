@@ -9,15 +9,10 @@ on:
 
 jobs:
   publish:
-    strategy:
-      matrix:
-        aws_region: [us-east-1, us-west-2]
-    runs-on: ai-platform-${{ inputs.environment }}-${{ matrix.aws_region == 'us-east-1' && 'ue1' || 'uw2' }}
+    runs-on: ai-platform-${{ inputs.environment }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Publish to ECR
+      - name: Publish to ECR (All Regions)
         uses: ./.github/actions/publish-emr-spark-to-env
-        with:
-          aws-region: ${{ matrix.aws_region }}

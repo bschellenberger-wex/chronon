@@ -12,14 +12,12 @@ MAIN_APP_TAG ?= $(MAIN_APP_VERSION)
 MAIN_APP_IMAGE_URL := ${ARTIFACTORY_REGISTRY_URL}/${MAIN_APP_IMAGE_NAME}:${MAIN_APP_TAG}
 
 # EMR Spark image (ECR) - Now handled by GitHub Actions
-ECR_REGISTRY_URL := 975049916663.dkr.ecr.us-east-1.amazonaws.com
 EMR_SPARK_IMAGE_NAME := chronon-spark-emr
 EMR_SPARK_VERSION := $(shell cat VERSION.emr-spark 2>/dev/null | tr -d '[:space:]')
 ifeq ($(strip $(EMR_SPARK_VERSION)),)
 $(error VERSION.emr-spark file must exist and contain a version string (e.g., 0.0.1-SNAPSHOT))
 endif
 EMR_SPARK_TAG ?= $(EMR_SPARK_VERSION)
-EMR_SPARK_IMAGE_URL := ${ECR_REGISTRY_URL}/${EMR_SPARK_IMAGE_NAME}:${EMR_SPARK_TAG}
 
 .PHONY: lint image-package image-push local-run docker-shell compose-up print-image-info build test prepare-artifacts list-jars promote-artifacts promote-to-subprod promote-to-prod scan-main-app scan-emr-spark scan-all clean-scan-results
 lint:
@@ -54,7 +52,16 @@ download-scala:
 	fi
 
 image-package: download-spark download-scala
-	./build_main_app.sh
+	@set -euo pipefail; \
+	if [ ! -f VERSION ]; then \
+	  echo "ERROR: VERSION file not found." >&2; \
+	  exit 1; \
+	fi; \
+	TAG=$$(cat VERSION); \
+	IMAGE_URI="$(ARTIFACTORY_REGISTRY_URL)/$(MAIN_APP_IMAGE_NAME):$$TAG"; \
+	echo "Building Docker image: $$IMAGE_URI"; \
+	docker buildx build --pull --platform linux/amd64 -f Dockerfile . -t "$$IMAGE_URI"
+
 image-push: image-package
 	@echo "Pushing main app image to Artifactory..."
 	@if ! echo ${MAIN_APP_TAG} | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
@@ -81,18 +88,12 @@ print-image-info:
 	@echo "Full image URL: ${MAIN_APP_IMAGE_URL}"
 
 print-emr-spark-image:
-	@echo "Registry: ${ECR_REGISTRY_URL}"
 	@echo "Image: ${EMR_SPARK_IMAGE_NAME}"
 	@echo "Tag: ${EMR_SPARK_TAG}"
-	@echo "Full image URL: ${EMR_SPARK_IMAGE_URL}"
 
 # ==============================================================================
 # EMR SPARK IMAGE PUBLISHING (Refactored for CI/CD)
 # ==============================================================================
-
-# AWS Configuration - these are defaults and are expected to be overridden by CI
-AWS_REGION ?= us-east-1
-AWS_ACCOUNT_ID ?= 975049916663
 
 # Target to build the EMR spark image locally. Called by the `build-image` CI job.
 .PHONY: build-emr-spark
@@ -100,7 +101,7 @@ build-emr-spark:
 	@echo "🏗️ Building EMR Spark image..."
 	@echo "Image Name: $(EMR_SPARK_IMAGE_NAME)"
 	@echo "Version Tag: $(EMR_SPARK_TAG)"
-	docker buildx build \
+	docker buildx build --pull \
 		--platform linux/amd64 \
 		--file emr-spark.Dockerfile \
 		--tag $(EMR_SPARK_IMAGE_NAME):$(EMR_SPARK_TAG) \
@@ -142,6 +143,51 @@ publish-emr-spark-to-region: ecr-login
 	  docker push $$ECR_IMAGE_URI; \
 	  echo "✅ Successfully pushed $$ECR_IMAGE_URI"; \
 	fi
+
+# Target to publish the EMR spark image to all regions with success/failure tracking.
+# This replaces the inline logic in GitHub Actions.
+# Usage: make publish-emr-spark REGIONS="us-east-1 us-west-2"
+# REGIONS parameter is required - no default regions
+.PHONY: publish-emr-spark
+publish-emr-spark:
+	@echo "🚀 Publishing EMR Spark image to all regions..."
+	@bash -c '\
+	ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text 2>/dev/null); \
+	if [ -z "$$ACCOUNT_ID" ]; then \
+	  echo "❌ Failed to retrieve AWS Account ID. Please ensure AWS credentials are configured."; \
+	  exit 1; \
+	fi; \
+	SUCCESSFUL_REGIONS=(); \
+	FAILED_REGIONS=(); \
+	REGIONS="$(REGIONS)"; \
+	if [ -z "$$REGIONS" ]; then \
+	  echo "❌ Error: REGIONS parameter is required. Usage: make publish-emr-spark REGIONS=\"us-east-1 us-west-2\""; \
+	  exit 1; \
+	fi; \
+	echo "📋 Target regions: $$REGIONS"; \
+	for region in $$REGIONS; do \
+	  echo "🚀 Publishing to region: $$region"; \
+	  if $(MAKE) publish-emr-spark-to-region AWS_ACCOUNT_ID=$$ACCOUNT_ID AWS_REGION=$$region; then \
+	    echo "✅ Completed publishing to $$region"; \
+	    SUCCESSFUL_REGIONS+=("$$region"); \
+	  else \
+	    echo "❌ Failed publishing to $$region"; \
+	    FAILED_REGIONS+=("$$region"); \
+	  fi; \
+	done; \
+	echo "📊 Publishing Summary:"; \
+	if [ $${#SUCCESSFUL_REGIONS[@]} -eq 0 ]; then \
+	  echo "✅ Successful regions: (none)"; \
+	else \
+	  echo "✅ Successful regions: \"$${SUCCESSFUL_REGIONS[@]}\""; \
+	fi; \
+	if [ $${#FAILED_REGIONS[@]} -gt 0 ]; then \
+	  echo "❌ Failed regions: \"$${FAILED_REGIONS[@]}\""; \
+	  exit 1; \
+	else \
+	  echo "🎉 Successfully published to all regions!"; \
+	fi'
+
 # Build configuration
 BAZEL_CONFIGS := --config java_8 --config scala_2.12 --config spark_3.5
 FULL_VERSION ?= $(shell ./.github/scripts/generate_version.sh version)
