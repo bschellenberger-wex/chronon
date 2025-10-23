@@ -7,7 +7,7 @@ env:
   IMAGE_NAME: chronon-spark-emr
 
 jobs:
-  # Build the Docker image once
+  # Build the Docker image on ubuntu-latest
   build-image:
     runs-on: ubuntu-latest
     outputs:
@@ -45,8 +45,34 @@ jobs:
           compression-level: '1'
           retention-days: 1
 
-  publish-dev:
+  # Scan the Docker image on ai-platform-dev
+  scan-image:
+    runs-on: ai-platform-dev
     needs: build-image
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: ./
+
+      - name: Load Docker image
+        run: |
+          gunzip -c image.tar.gz | docker load
+          echo "📦 Loaded Docker image from artifact"
+
+      - name: Setup JFrog CLI
+        uses: wexinc/shared-actions/fabric/artifactory-cli@v1
+
+      - name: 🛡️ Scan EMR Spark Image
+        run: make scan-emr-spark
+
+
+  publish-dev:
+    needs: [build-image, scan-image]
     uses: ./.github/workflows/publish-emr-spark-to-env.yml
     with:
       environment: dev

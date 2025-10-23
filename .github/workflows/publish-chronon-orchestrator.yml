@@ -35,6 +35,9 @@ jobs:
       - name: Build Docker image using Makefile
         run: make image-package
 
+      - name: 🛡️ Scan Chronon Orchestrator Image
+        run: make scan-main-app
+
       - name: Build and Publish Docker Image to Artifactory (Nonprod)
         uses: wexinc/shared-actions/fabric/artifactory-docker-deploy@v1
         with:

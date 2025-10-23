@@ -21,7 +21,7 @@ endif
 EMR_SPARK_TAG ?= $(EMR_SPARK_VERSION)
 EMR_SPARK_IMAGE_URL := ${ECR_REGISTRY_URL}/${EMR_SPARK_IMAGE_NAME}:${EMR_SPARK_TAG}
 
-.PHONY: lint image-package image-push local-run docker-shell compose-up print-image-info build test prepare-artifacts list-jars promote-artifacts promote-to-subprod promote-to-prod
+.PHONY: lint image-package image-push local-run docker-shell compose-up print-image-info build test prepare-artifacts list-jars promote-artifacts promote-to-subprod promote-to-prod scan-main-app scan-emr-spark scan-all clean-scan-results
 lint:
 	echo "👕 lint"
 	black src
@@ -142,7 +142,6 @@ publish-emr-spark-to-region: ecr-login
 	  docker push $$ECR_IMAGE_URI; \
 	  echo "✅ Successfully pushed $$ECR_IMAGE_URI"; \
 	fi
-
 # Build configuration
 BAZEL_CONFIGS := --config java_8 --config scala_2.12 --config spark_3.5
 FULL_VERSION ?= $(shell ./.github/scripts/generate_version.sh version)
@@ -297,6 +296,20 @@ S3_REGION ?= $(AWS_REGION)
 ARTIFACTORY_SUBPROD_REPO := ai-platform-maven-subprod
 ARTIFACTORY_PROD_REPO := ai-platform-maven-prod
 FORCE_OVERWRITE ?= false
+
+# JFrog Security Scanning Configuration
+SCAN_RESULT_MAIN_APP := scan-result-main-app.json
+SCAN_RESULT_EMR_SPARK := scan-result-emr-spark.json
+SCAN_PATH := ai-platform-generic-subprod/docker-scans
+MIN_SEVERITY ?= High
+FIXABLE_ONLY ?= true
+
+# Image names for upload paths (image-name/tag structure)
+MAIN_APP_IMAGE_NAME_SIMPLE := chronon-orchestrator
+EMR_SPARK_IMAGE_NAME_SIMPLE := chronon-spark-emr
+
+# Scan result filename (just scan-result.json)
+SCAN_RESULT_FILENAME := scan-result.json
 
 # Helper to find the spark-assembly JAR
 find-spark-jar:
@@ -453,4 +466,62 @@ _copy-to-prod:
 		  echo "    ✅ Completed copying $$ARTIFACT_ID"; \
 	   fi; \
 	done < chronon-artifacts/ARTIFACT_MANIFEST.txt
+
+# ==============================================================================
+# JFROG SECURITY SCANNING TARGETS
+# ==============================================================================
+
+# Scan the Chronon Orchestrator Docker image (assumes image is already built)
+.PHONY: scan-main-app
+scan-main-app:
+	@echo "🔍 Scanning locally built Chronon Orchestrator image: $(MAIN_APP_IMAGE_URL)"
+	@if [ -z "$(MAIN_APP_IMAGE_URL)" ]; then \
+		echo "❌ Error: MAIN_APP_IMAGE_URL is not set. Make sure VERSION file exists."; \
+		exit 1; \
+	fi
+	@echo "Scanning with minimum severity: $(MIN_SEVERITY)"
+	@echo "Fixable only: $(FIXABLE_ONLY)"
+	@jf docker scan $(MAIN_APP_IMAGE_URL) \
+		--min-severity $(MIN_SEVERITY) \
+		$(if $(filter true,$(FIXABLE_ONLY)),--fixable-only) \
+		--format json \
+		--fail | tee $(SCAN_RESULT_MAIN_APP); exit $${PIPESTATUS[0]}
+	@echo "📋 Scan Result for Main App:"
+	@cat $(SCAN_RESULT_MAIN_APP) | jq . || cat $(SCAN_RESULT_MAIN_APP)
+	@echo "📤 Uploading scan result to Artifactory..."
+	@jf rt u "$(SCAN_RESULT_MAIN_APP)" "$(SCAN_PATH)/$(MAIN_APP_IMAGE_NAME_SIMPLE)/$(MAIN_APP_TAG)/$(SCAN_RESULT_FILENAME)"
+	@echo "✅ Main app scan completed and uploaded"
+
+# Scan the EMR Spark Docker image
+.PHONY: scan-emr-spark
+scan-emr-spark:
+	@echo "🔍 Scanning EMR Spark image: $(EMR_SPARK_IMAGE_NAME):$(EMR_SPARK_TAG)"
+	@if [ -z "$(EMR_SPARK_TAG)" ]; then \
+		echo "❌ Error: EMR_SPARK_TAG is not set. Make sure VERSION.emr-spark file exists."; \
+		exit 1; \
+	fi
+	@echo "Scanning with minimum severity: $(MIN_SEVERITY)"
+	@echo "Fixable only: $(FIXABLE_ONLY)"
+	@jf docker scan $(EMR_SPARK_IMAGE_NAME):$(EMR_SPARK_TAG) \
+		--min-severity $(MIN_SEVERITY) \
+		$(if $(filter true,$(FIXABLE_ONLY)),--fixable-only) \
+		--format json \
+		--fail | tee $(SCAN_RESULT_EMR_SPARK); exit $${PIPESTATUS[0]}
+	@echo "📋 Scan Result for EMR Spark:"
+	@cat $(SCAN_RESULT_EMR_SPARK) | jq . || cat $(SCAN_RESULT_EMR_SPARK)
+	@echo "📤 Uploading scan result to Artifactory..."
+	@jf rt u "$(SCAN_RESULT_EMR_SPARK)" "$(SCAN_PATH)/$(EMR_SPARK_IMAGE_NAME_SIMPLE)/$(EMR_SPARK_TAG)/$(SCAN_RESULT_FILENAME)"
+	@echo "✅ EMR Spark scan completed and uploaded"
+
+# Scan both images
+.PHONY: scan-all
+scan-all: scan-main-app scan-emr-spark
+	@echo "✅ All security scans completed successfully!"
+
+# Clean up scan result files
+.PHONY: clean-scan-results
+clean-scan-results:
+	@echo "🧹 Cleaning up scan result files..."
+	@rm -f $(SCAN_RESULT_MAIN_APP) $(SCAN_RESULT_EMR_SPARK)
+	@echo "✅ Scan result files cleaned up"
 
