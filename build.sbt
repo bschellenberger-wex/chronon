@@ -1,5 +1,9 @@
 import sbt.Keys._
 import sbt.Test
+import sbtassembly.AssemblyPlugin
+import sbtassembly.AssemblyPlugin.autoImport._
+import sbtassembly.MergeStrategy
+import sbt.{taskKey, settingKey, Configurations}
 
 import scala.io.StdIn
 import scala.sys.process._
@@ -11,7 +15,7 @@ lazy val scala213 = "2.13.6"
 lazy val spark2_4_0 = "2.4.0"
 lazy val spark3_1_1 = "3.1.1"
 lazy val spark3_2_1 = "3.2.1"
-lazy val spark3_5_3 = "3.5.3"
+lazy val spark3_5_5 = "3.5.5"
 lazy val tmp_warehouse = "/tmp/chronon/"
 lazy val icebergVersion = "1.1.0"
 
@@ -40,7 +44,7 @@ ThisBuild / developers := List(
 ThisBuild / assembly / test := {}
 
 val use_spark_3_5 = settingKey[Boolean]("Flag to build for 3.5")
-ThisBuild / use_spark_3_5 := false 
+ThisBuild / use_spark_3_5 := false
 
 def buildTimestampSuffix = ";build.timestamp=" + new java.util.Date().getTime
 lazy val publishSettings = Seq(
@@ -85,7 +89,7 @@ enablePlugins(GitVersioning, GitBranchPrompt)
 lazy val supportedVersions = List(scala211, scala212, scala213)
 
 lazy val root = (project in file("."))
-  .aggregate(api, aggregator, online, spark_uber, spark_embedded, service, flink)
+  .aggregate(api, aggregator, online, aws_online, spark_uber, spark_embedded, service, flink)
   .settings(
     publish / skip := true,
     crossScalaVersions := Nil,
@@ -143,8 +147,8 @@ val VersionMatrix: Map[String, VersionDependency] = Map(
       "org.apache.spark" %% "spark-core"
     ),
     Some(spark2_4_0),
-    Some(spark3_5_3),
-    Some(spark3_5_3)
+    Some(spark3_5_5),
+    Some(spark3_5_5)
   ),
   "spark-all" -> VersionDependency(
     Seq(
@@ -167,8 +171,8 @@ val VersionMatrix: Map[String, VersionDependency] = Map(
       "org.apache.spark" %% "spark-sql-kafka-0-10"
     ),
     Some(spark2_4_0),
-    Some(spark3_5_3),
-    Some(spark3_5_3)
+    Some(spark3_5_5),
+    Some(spark3_5_5)
   ),
   "scala-reflect" -> VersionDependency(
     Seq("org.scala-lang" % "scala-reflect"),
@@ -356,7 +360,10 @@ lazy val online = project
       "net.jodah" % "typetools" % "0.4.1",
       "com.github.ben-manes.caffeine" % "caffeine" % "2.8.5"
     ),
-    libraryDependencies ++= fromMatrix(scalaVersion.value, "spark-all", "scala-parallel-collections", "netty-buffer"),
+    libraryDependencies ++= fromMatrix(scalaVersion.value,
+                                       if (use_spark_3_5.value) "spark-all-3-5" else "spark-all",
+                                       "scala-parallel-collections",
+                                       "netty-buffer"),
     version := git.versionProperty.value
   )
 
@@ -381,6 +388,368 @@ lazy val online_unshaded = (project in file("online"))
                                        "scala-parallel-collections",
                                        "netty-buffer")
   )
+// WEX AWS Online Build
+// This project provides:
+// 1. DynamoDBKVStoreImpl - KVStore implementation for DynamoDB
+// 2. Spark2DynamoLoader - Spark job to load data from Spark tables into DynamoDB
+// 3. PolarisCatalogExplorer - Utility to explore Polaris catalog
+//
+// Build outputs:
+// 1. aws_online-assembly-*.jar: Medium fat JAR for EMR Serverless (excludes Spark, includes AWS SDK)
+// 2. aws_online-*.jar: Slim JAR (classes only, for when Spring Boot provides dependencies)
+// 3. aws_online-spring-assembly-*.jar: Fat JAR with Spark 3.5.5 bundled and shaded for Spring Boot
+//    This is needed because CatalystUtil requires Spark to run SQL expressions internally
+//    Maven artifact: ai.chronon:aws_online_2.12_spark_3.5.5:VERSION
+
+// Define task keys for clearer naming (must be outside project definition)
+val assemblyForEmrServerless = taskKey[File]("Create medium fat JAR for EMR Serverless (excludes Spark/Hadoop)")
+val assemblyForSpring = taskKey[File]("Create shaded fat JAR for Spring Boot (includes Spark 3.5.5, shaded)")
+
+// Define configurations for different assembly types
+val Shaded = config("Shaded") extend Compile
+val EmrServerless = config("EmrServerless") extend Compile
+
+lazy val aws_online = (project in file("aws_online"))
+  .dependsOn(online.%("compile->compile;test->test"))
+  .settings(
+    publishSettings,
+    // Maven artifact coordinates for Spring Boot consumption
+    organization := "ai.chronon",
+    name := "aws_online",
+    scalaVersion := scala212, // Only Scala 2.12
+    crossScalaVersions := List(scala212),
+    // Enforce Spark 3.5.5
+    (Compile / compile) := {
+      if (!use_spark_3_5.value) {
+        throw new RuntimeException(
+          "ERROR: aws_online project requires Spark 3.5.5. " +
+            "Set 'ThisBuild / use_spark_3_5 := true' before building."
+        )
+      }
+      (Compile / compile).value
+    },
+    // Force Java 1.8 bytecode to ensure compatibility
+    scalacOptions ++= Seq("-target:jvm-1.8"),
+    javacOptions ++= Seq("-source", "1.8", "-target", "1.8"),
+    libraryDependencies ++= Seq(
+      // AWS DynamoDB dependencies (SDK v2) - These WILL be bundled
+      "software.amazon.awssdk" % "dynamodb" % "2.20.162",
+      "software.amazon.awssdk" % "sdk-core" % "2.20.162",
+
+      // Test dependencies
+      "org.scalatest" %% "scalatest" % "3.2.15" % "test",
+      "org.scalatestplus" %% "mockito-3-4" % "3.2.10.0" % "test",
+      "org.testcontainers" % "testcontainers" % "2.0.2" % "test",
+      "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.15.2" % "test"
+    ),
+    assembly / test := {},
+    // Default assembly JAR name (for backward compatibility)
+    assembly / assemblyJarName := s"${name.value}-assembly-${version.value}.jar",
+
+    // --- KEY SECTION: Exclude Provided Libraries ---
+    // This tells sbt-assembly to NOT bundle these JARs
+    assembly / assemblyExcludedJars := {
+      val cp = (assembly / fullClasspath).value
+      cp.filter { file =>
+        val name = file.data.getName
+        // Exclude Spark (provided by EMR Serverless)
+        (name.contains("spark-core") ||
+          name.contains("spark-sql") ||
+          name.contains("spark-catalyst") ||
+          name.contains("spark-hive") ||
+          name.contains("spark-streaming") ||
+          name.contains("spark-tags") ||
+          name.contains("spark-unsafe")) ||
+          // Exclude Hadoop (provided by EMR Serverless)
+          (name.contains("hadoop-client") ||
+            name.contains("hadoop-common") ||
+            name.contains("hadoop-hdfs") ||
+            name.contains("hadoop-yarn")) ||
+          // Exclude RocksDB (transitive junk, not needed)
+          name.contains("rocksdbjni") ||
+          // Exclude other transitive junk from Spark/Hive
+          (name.contains("kafka") && name.contains("apache")) ||
+          name.contains("curator") ||
+          name.contains("derby") ||
+          (name.contains("parquet") && !name.contains("shaded")) ||
+          name.contains("orc") ||
+          (name.contains("hive") && !name.contains("shims")) ||
+          name.contains("zookeeper") ||
+          name.contains("tez")
+        // NOTE: We DO NOT exclude the AWS SDK v2 ("dynamodb", "sdk-core", etc.)
+      }
+    },
+
+    // --- KEY SECTION: Merge Strategy ---
+    assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", "MANIFEST.MF") => MergeStrategy.discard
+
+      // This merges all `services` files instead of discarding them
+      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.concat
+
+      // Keep the original rule for other META-INF files
+      case PathList("META-INF", xs @ _*) if !xs.last.endsWith(".SF") && !xs.last.endsWith(".DSA") && !xs.last.endsWith(".RSA") =>
+        MergeStrategy.first
+
+      // Discard signature files
+      case PathList("META-INF", xs @ _*) => MergeStrategy.discard
+
+      // Exclude classes from provided libraries (double-check)
+      case PathList("org", "apache", "spark", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "hadoop", xs @ _*) => MergeStrategy.discard
+
+      // Exclude transitive junk classes
+      case PathList("org", "apache", "kafka", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "curator", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "derby", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "parquet", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "orc", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "hive", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "zookeeper", xs @ _*) => MergeStrategy.discard
+
+      // Exclude RocksDB native libraries (very large)
+      case "librocksdbjni-linux-aarch64-musl.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-aarch64.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-ppc64le-musl.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-ppc64le.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-s390x-musl.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-s390x.so" => MergeStrategy.discard
+      case "librocksdbjni-linux64-musl.so" => MergeStrategy.discard
+      case "librocksdbjni-linux64.so" => MergeStrategy.discard
+      case "librocksdbjni-osx-arm64.jnilib" => MergeStrategy.discard
+      case "librocksdbjni-osx-x86_64.jnilib" => MergeStrategy.discard
+      case "librocksdbjni-win64.dll" => MergeStrategy.discard
+      case PathList("org", "rocksdb", xs @ _*) => MergeStrategy.discard
+
+      // NOTE: We DO NOT exclude "software/amazon/awssdk" here
+
+      case "application.conf" => MergeStrategy.concat
+      case "reference.conf" => MergeStrategy.concat
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
+    version := git.versionProperty.value
+  )
+  .settings(addArtifact(assembly / artifact, assembly))
+  // --- EMR SERVERLESS ASSEMBLY (excludes Spark/Hadoop) ---
+  // Use separate EmrServerless configuration to build assembly with custom JAR name
+  .configs(EmrServerless)
+  .settings(
+    // Add assembly plugin settings to EmrServerless configuration
+    inConfig(EmrServerless)(AssemblyPlugin.assemblySettings),
+
+    // EMR Serverless assembly JAR name
+    EmrServerless / assembly / assemblyJarName := s"${name.value}-emr-assembly-${version.value}.jar",
+
+    // EMR Serverless assembly: excludes Spark/Hadoop (same as regular assembly)
+    EmrServerless / assembly / assemblyExcludedJars := {
+      val cp = (EmrServerless / assembly / fullClasspath).value
+      cp.filter { file =>
+        val name = file.data.getName
+        // Exclude Spark (provided by EMR Serverless)
+        (name.contains("spark-core") ||
+          name.contains("spark-sql") ||
+          name.contains("spark-catalyst") ||
+          name.contains("spark-hive") ||
+          name.contains("spark-streaming") ||
+          name.contains("spark-tags") ||
+          name.contains("spark-unsafe")) ||
+          // Exclude Hadoop (provided by EMR Serverless)
+          (name.contains("hadoop-client") ||
+            name.contains("hadoop-common") ||
+            name.contains("hadoop-hdfs") ||
+            name.contains("hadoop-yarn")) ||
+          // Exclude RocksDB (transitive junk, not needed)
+          name.contains("rocksdbjni") ||
+          // Exclude other transitive junk from Spark/Hive
+          (name.contains("kafka") && name.contains("apache")) ||
+          name.contains("curator") ||
+          name.contains("derby") ||
+          (name.contains("parquet") && !name.contains("shaded")) ||
+          name.contains("orc") ||
+          (name.contains("hive") && !name.contains("shims")) ||
+          name.contains("zookeeper") ||
+          name.contains("tez")
+      }
+    },
+
+    // EMR Serverless assembly merge strategy (same as regular assembly)
+    EmrServerless / assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", "MANIFEST.MF") => MergeStrategy.discard
+      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.concat
+      case PathList("META-INF", xs @ _*) if !xs.last.endsWith(".SF") && !xs.last.endsWith(".DSA") && !xs.last.endsWith(".RSA") =>
+        MergeStrategy.first
+      case PathList("META-INF", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "spark", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "hadoop", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "kafka", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "curator", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "derby", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "parquet", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "orc", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "hive", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "zookeeper", xs @ _*) => MergeStrategy.discard
+      case "librocksdbjni-linux-aarch64-musl.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-aarch64.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-ppc64le-musl.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-ppc64le.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-s390x-musl.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-s390x.so" => MergeStrategy.discard
+      case "librocksdbjni-linux64-musl.so" => MergeStrategy.discard
+      case "librocksdbjni-linux64.so" => MergeStrategy.discard
+      case "librocksdbjni-osx-arm64.jnilib" => MergeStrategy.discard
+      case "librocksdbjni-osx-x86_64.jnilib" => MergeStrategy.discard
+      case "librocksdbjni-win64.dll" => MergeStrategy.discard
+      case PathList("org", "rocksdb", xs @ _*) => MergeStrategy.discard
+      case "application.conf" => MergeStrategy.concat
+      case "reference.conf" => MergeStrategy.concat
+      case x => MergeStrategy.first
+    },
+
+    EmrServerless / assembly / test := {},
+
+    // Wrapper task with clearer name for EMR Serverless assembly
+    assemblyForEmrServerless := {
+      val log = streams.value.log
+      val jar = (EmrServerless / assembly).value
+      log.info("✅ EMR Serverless assembly created")
+      log.info(s"   JAR: $jar")
+      log.info(s"   Size: ${jar.length() / 1024 / 1024}MB")
+      log.info(s"   Excludes: Spark, Hadoop (provided by EMR Serverless)")
+      jar
+    }
+  )
+  // --- SHADED ASSEMBLY for Spring Boot (includes Spark, shaded for CatalystUtil) ---
+  // Use separate Shaded configuration to build assembly with Spark included
+  .configs(Shaded)
+  .settings(
+    // Add assembly plugin settings to Shaded configuration
+    inConfig(Shaded)(AssemblyPlugin.assemblySettings),
+
+    // Publish the shaded JAR artifact
+    addArtifact(Shaded / assembly / artifact, Shaded / assembly),
+
+    // Shaded assembly JAR name
+    Shaded / assembly / assemblyJarName := s"${name.value}-shaded-assembly-${version.value}.jar",
+
+    // Shaded assembly: includes Spark (doesn't exclude it) and shades it
+    // This is needed because CatalystUtil creates a SparkSession internally and uses Spark Catalyst
+    Shaded / assembly / assemblyExcludedJars := {
+      val cp = (Shaded / assembly / fullClasspath).value
+      // Exclude JARs that contain Java 19+ multi-release entries to avoid shading errors
+      // These will be filtered out at the merge strategy level instead
+      cp.filter { file =>
+        val name = file.data.getName
+        // DON'T exclude Spark - we need to bundle and shade it for CatalystUtil
+        // Only exclude Hadoop and other provided dependencies
+        (name.contains("hadoop-client") ||
+          name.contains("hadoop-common") ||
+          name.contains("hadoop-hdfs") ||
+          name.contains("hadoop-yarn")) ||
+          name.contains("rocksdbjni") ||
+          (name.contains("kafka") && name.contains("apache")) ||
+          name.contains("curator") ||
+          name.contains("derby") ||
+          (name.contains("parquet") && !name.contains("shaded")) ||
+          name.contains("orc") ||
+          (name.contains("hive") && !name.contains("shims")) ||
+          name.contains("zookeeper") ||
+          name.contains("tez")
+      }
+    },
+
+    // Shaded assembly merge strategy: includes Spark (doesn't discard it)
+    Shaded / assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", "MANIFEST.MF") => MergeStrategy.discard
+      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.concat
+      // Discard multi-release JAR entries for Java 19+ (we're building for Java 8)
+      // These cause "Unsupported class file major version 63" warnings during shading
+      // The JAR will use the Java 8-compatible versions instead
+      // Must match BEFORE the general META-INF pattern
+      case PathList("META-INF", "versions", "19", xs @ _*) => MergeStrategy.discard
+      case PathList("META-INF", "versions", version, xs @ _*) =>
+        try {
+          val v = version.toInt
+          if (v >= 19) MergeStrategy.discard else MergeStrategy.first
+        } catch {
+          case _: NumberFormatException => MergeStrategy.first
+        }
+      case PathList("META-INF", xs @ _*) if xs.headOption.exists(_.startsWith("versions")) =>
+        // Catch any other versions/ paths we might have missed
+        MergeStrategy.first
+      case PathList("META-INF", xs @ _*) if !xs.last.endsWith(".SF") && !xs.last.endsWith(".DSA") && !xs.last.endsWith(".RSA") =>
+        MergeStrategy.first
+      case PathList("META-INF", xs @ _*) => MergeStrategy.discard
+      // NOTE: We DO NOT discard org.apache.spark.* - we want to include and shade it
+      case PathList("org", "apache", "hadoop", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "kafka", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "curator", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "derby", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "parquet", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "orc", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "hive", xs @ _*) => MergeStrategy.discard
+      case PathList("org", "apache", "zookeeper", xs @ _*) => MergeStrategy.discard
+      case "librocksdbjni-linux-aarch64-musl.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-aarch64.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-ppc64le-musl.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-ppc64le.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-s390x-musl.so" => MergeStrategy.discard
+      case "librocksdbjni-linux-s390x.so" => MergeStrategy.discard
+      case "librocksdbjni-linux64-musl.so" => MergeStrategy.discard
+      case "librocksdbjni-linux64.so" => MergeStrategy.discard
+      case "librocksdbjni-osx-arm64.jnilib" => MergeStrategy.discard
+      case "librocksdbjni-osx-x86_64.jnilib" => MergeStrategy.discard
+      case "librocksdbjni-win64.dll" => MergeStrategy.discard
+      case PathList("org", "rocksdb", xs @ _*) => MergeStrategy.discard
+      case "application.conf" => MergeStrategy.concat
+      case "reference.conf" => MergeStrategy.concat
+      case x => MergeStrategy.first
+    },
+
+    Shaded / assembly / test := {},
+
+    // Shading rules: Relocate Spark and Jackson packages to avoid conflicts in Spring Boot
+    // This uses sbt-assembly's built-in shading (no external tools needed)
+    Shaded / assemblyShadeRules := Seq(
+      ShadeRule.rename("org.apache.spark.**" -> "ai.chronon.shaded.spark.@1").inAll,
+      ShadeRule.rename("org.apache.spark.sql.**" -> "ai.chronon.shaded.spark.sql.@1").inAll,
+      ShadeRule.rename("org.apache.spark.catalyst.**" -> "ai.chronon.shaded.spark.catalyst.@1").inAll,
+      ShadeRule.rename("org.apache.spark.hive.**" -> "ai.chronon.shaded.spark.hive.@1").inAll,
+      ShadeRule.rename("org.apache.spark.unsafe.**" -> "ai.chronon.shaded.spark.unsafe.@1").inAll,
+      ShadeRule.rename("com.fasterxml.jackson.**" -> "ai.chronon.shaded.jackson.@1").inAll
+    ),
+
+    // Wrapper task with clearer name for Spring Boot shaded assembly
+    // sbt-assembly handles shading automatically via assemblyShadeRules
+    assemblyForSpring := {
+      val log = streams.value.log
+      val shadedJar = (Shaded / assembly).value
+
+      log.info("✅ Spring Boot shaded assembly created with Spark 3.5.5 bundled and shaded")
+      log.info(s"   JAR: $shadedJar")
+      log.info(s"   Size: ${shadedJar.length() / 1024 / 1024}MB")
+      log.info(s"   Spark packages relocated to: ai.chronon.shaded.spark.*")
+
+      // Verify shading worked by checking for relocated classes
+      try {
+        val jarContents = Process(Seq("jar", "tf", shadedJar.toString)).!!
+        if (jarContents.contains("ai/chronon/shaded/spark/")) {
+          log.info("   ✅ Verified: Shaded Spark classes found in JAR")
+        } else {
+          log.warn("   ⚠️  Warning: Shaded Spark classes not found - shading may not have worked")
+        }
+      } catch {
+        case e: Exception =>
+          log.warn(s"   ⚠️  Could not verify shading: ${e.getMessage}")
+      }
+
+      shadedJar
+    }
+    // TODO: Proper Maven publishing for shaded assembly
+    // Currently using: mvn install:install-file (see BUILD_REFERENCE.md)
+    // Future: Configure SBT to publish shaded assembly as aws_online_2.12_spark_3.5.5
+  )
 
 
 def cleanSparkMeta(): Unit = {
@@ -399,15 +768,15 @@ val sparkBaseSettings: Seq[Setting[_]] = Seq(
   Compile / unmanagedSources := {
     val sources = (Compile / unmanagedSources).value
     val srcDir = (Compile / sourceDirectory).value
-    
+
     val spark_3_5_encoder = srcDir / "35plus" / "ai" / "chronon" / "spark" / "EncoderUtil.scala"
     val spark_default_encoder = srcDir / "default" / "ai" / "chronon" / "spark" / "EncoderUtil.scala"
-    
-    val filteredSources = sources.filterNot(f => 
-      f.getAbsolutePath == spark_3_5_encoder.getAbsolutePath || 
+
+    val filteredSources = sources.filterNot(f =>
+      f.getAbsolutePath == spark_3_5_encoder.getAbsolutePath ||
       f.getAbsolutePath == spark_default_encoder.getAbsolutePath
     )
-    
+
     filteredSources :+ (if (use_spark_3_5.value) spark_3_5_encoder else spark_default_encoder)
   },
   mainClass in (Compile, run) := Some("ai.chronon.spark.Driver"),
@@ -423,7 +792,7 @@ lazy val spark_uber = (project in file("spark"))
     sparkBaseSettings,
     version := git.versionProperty.value,
     crossScalaVersions := supportedVersions,
-    libraryDependencies ++= (if (use_spark_3_5.value) 
+    libraryDependencies ++= (if (use_spark_3_5.value)
       fromMatrix(scalaVersion.value, "jackson", "spark-all-3-5/provided", "delta-core/provided")
     else
       fromMatrix(scalaVersion.value, "jackson", "spark-all/provided", "delta-core/provided", "iceberg32/provided")),
@@ -435,7 +804,7 @@ lazy val spark_embedded = (project in file("spark"))
     sparkBaseSettings,
     version := git.versionProperty.value,
     crossScalaVersions := supportedVersions,
-    libraryDependencies ++= (if (use_spark_3_5.value) 
+    libraryDependencies ++= (if (use_spark_3_5.value)
       fromMatrix(scalaVersion.value, "spark-all-3-5", "delta-core")
     else
       fromMatrix(scalaVersion.value, "spark-all", "delta-core", "iceberg32")),
@@ -534,6 +903,3 @@ ThisBuild / assemblyMergeStrategy := {
   case _                                   => MergeStrategy.first
 }
 exportJars := true
-
-
-

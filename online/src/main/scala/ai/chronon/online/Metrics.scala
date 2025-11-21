@@ -38,6 +38,7 @@ object Metrics {
     val joinMetadataExport = "join.metadata_export"
     val JoinLogFlatten = "join.log_flatten"
     val LabelJoin = "label_join"
+    val KVStore = "kvstore"
   }
 
   import Environment._

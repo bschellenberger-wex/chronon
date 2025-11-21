@@ -571,3 +571,17 @@ clean-scan-results:
 	@rm -f $(SCAN_RESULT_MAIN_APP) $(SCAN_RESULT_EMR_SPARK)
 	@echo "✅ Scan result files cleaned up"
 
+# ==============================================================================
+# AWS ONLINE JAR BUILD TARGETS
+# ==============================================================================
+
+# Build all aws_online JARs (slim, EMR medium, Spring shaded)
+# Usage: make build-aws-online [ARGS="--publish-local --delete"]
+#   --publish-local  Build all JARs and publish the shaded JAR to local Maven repository
+#   --delete         Delete the artifact from local Maven repository (if used alone, only deletes and exits)
+.PHONY: build-aws-online
+build-aws-online:
+	@echo "🏗️  Building all aws_online JARs..."
+	@bash .github/scripts/build_aws_online_jars.sh $(ARGS)
+	@echo "✅ aws_online JAR build completed!"
+
