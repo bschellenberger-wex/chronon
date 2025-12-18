@@ -413,9 +413,10 @@ lazy val aws_online = (project in file("aws_online"))
   .dependsOn(online.%("compile->compile;test->test"))
   .settings(
     publishSettings,
-    // Maven artifact coordinates for Spring Boot consumption
+    // Maven artifact coordinates - matches spark-assembly format
     organization := "ai.chronon",
-    name := "aws_online",
+    // Base artifact name: aws-online (with hyphen, matching spark-assembly naming)
+    name := "aws-online",
     scalaVersion := scala212, // Only Scala 2.12
     crossScalaVersions := List(scala212),
     // Enforce Spark 3.5.5
@@ -443,8 +444,25 @@ lazy val aws_online = (project in file("aws_online"))
       "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.15.2" % "test"
     ),
     assembly / test := {},
-    // Default assembly JAR name (for backward compatibility)
-    assembly / assemblyJarName := s"${name.value}-assembly-${version.value}.jar",
+    // Default artifact: slim JAR (packageBin) - no classifier
+    // This is the main artifact published with no classifier
+    // Output regular package JAR to known location for CI/CD (override via CHRONON_BUILD_DIR env var)
+    Compile / packageBin / artifactPath := {
+      sys.env.get("CHRONON_BUILD_DIR").map { buildDir =>
+        file(buildDir) / "jars" / s"${name.value}_${scalaVersion.value}-${version.value}.jar"
+      }.getOrElse {
+        // Default: use SBT's default location
+        (Compile / packageBin / artifactPath).value
+      }
+    },
+    // Configure the default artifact (slim JAR) - this is what gets published with no classifier
+    // The artifact ID will be: aws-online_spark-3.5_scala_2.12 (set via artifact name override)
+    Compile / packageBin / artifact := {
+      val art = (Compile / packageBin / artifact).value
+      // Extract Spark major.minor version for artifact ID with spark- prefix
+      val sparkMajorMinor = if (use_spark_3_5.value) "3.5" else "3.1"
+      art.withName(s"aws-online_spark-${sparkMajorMinor}_scala_${scalaVersion.value}")
+    },
 
     // --- KEY SECTION: Exclude Provided Libraries ---
     // This tells sbt-assembly to NOT bundle these JARs
@@ -531,7 +549,7 @@ lazy val aws_online = (project in file("aws_online"))
     },
     version := git.versionProperty.value
   )
-  .settings(addArtifact(assembly / artifact, assembly))
+  // Note: We do NOT add the default assembly as an artifact - only packageBin (slim) is the default
   // --- EMR SERVERLESS ASSEMBLY (excludes Spark/Hadoop) ---
   // Use separate EmrServerless configuration to build assembly with custom JAR name
   .configs(EmrServerless)
@@ -541,6 +559,25 @@ lazy val aws_online = (project in file("aws_online"))
 
     // EMR Serverless assembly JAR name
     EmrServerless / assembly / assemblyJarName := s"${name.value}-emr-assembly-${version.value}.jar",
+// Output EMR assembly JAR to known location for CI/CD (override via CHRONON_BUILD_DIR env var)
+    EmrServerless / assembly / assemblyOutputPath := {
+      sys.env.get("CHRONON_BUILD_DIR").map { buildDir =>
+        file(buildDir) / "jars" / s"${name.value}-emr-assembly-${version.value}.jar"
+      }.getOrElse {
+        // Default: use SBT's default location
+        target.value / s"${name.value}-emr-assembly-${version.value}.jar"
+      }
+    },
+    // Configure EMR assembly artifact with 'emr' classifier
+    EmrServerless / assembly / artifact := {
+      val art = (EmrServerless / assembly / artifact).value
+      val sparkMajorMinor = if (use_spark_3_5.value) "3.5" else "3.1"
+      art
+        .withName(s"aws-online_spark-${sparkMajorMinor}_scala_${scalaVersion.value}")
+        .withClassifier(Some("emr"))
+    },
+    // Add EMR assembly as an artifact with classifier
+    addArtifact(EmrServerless / assembly / artifact, EmrServerless / assembly),
 
     // EMR Serverless assembly: excludes Spark/Hadoop (same as regular assembly)
     EmrServerless / assembly / assemblyExcludedJars := {
@@ -627,11 +664,27 @@ lazy val aws_online = (project in file("aws_online"))
     // Add assembly plugin settings to Shaded configuration
     inConfig(Shaded)(AssemblyPlugin.assemblySettings),
 
-    // Publish the shaded JAR artifact
-    addArtifact(Shaded / assembly / artifact, Shaded / assembly),
-
     // Shaded assembly JAR name
     Shaded / assembly / assemblyJarName := s"${name.value}-shaded-assembly-${version.value}.jar",
+// Output shaded assembly JAR to known location for CI/CD (override via CHRONON_BUILD_DIR env var)
+    Shaded / assembly / assemblyOutputPath := {
+      sys.env.get("CHRONON_BUILD_DIR").map { buildDir =>
+        file(buildDir) / "jars" / s"${name.value}-shaded-assembly-${version.value}.jar"
+      }.getOrElse {
+        // Default: use SBT's default location
+        target.value / s"${name.value}-shaded-assembly-${version.value}.jar"
+      }
+    },
+    // Configure shaded assembly artifact with 'shaded' classifier
+    Shaded / assembly / artifact := {
+      val art = (Shaded / assembly / artifact).value
+      val sparkMajorMinor = if (use_spark_3_5.value) "3.5" else "3.1"
+      art
+        .withName(s"aws-online_spark-${sparkMajorMinor}_scala_${scalaVersion.value}")
+        .withClassifier(Some("shaded"))
+    },
+    // Add shaded assembly as an artifact with classifier
+    addArtifact(Shaded / assembly / artifact, Shaded / assembly),
 
     // Shaded assembly: includes Spark (doesn't exclude it) and shades it
     // This is needed because CatalystUtil creates a SparkSession internally and uses Spark Catalyst
@@ -796,6 +849,15 @@ lazy val spark_uber = (project in file("spark"))
       fromMatrix(scalaVersion.value, "jackson", "spark-all-3-5/provided", "delta-core/provided")
     else
       fromMatrix(scalaVersion.value, "jackson", "spark-all/provided", "delta-core/provided", "iceberg32/provided")),
+    // Output assembly JAR to known location for CI/CD (override via CHRONON_BUILD_DIR env var)
+    assembly / assemblyOutputPath := {
+      sys.env.get("CHRONON_BUILD_DIR").map { buildDir =>
+        file(buildDir) / "jars" / s"${name.value}-assembly-${version.value}.jar"
+      }.getOrElse {
+        // Default: use SBT's default location
+        target.value / s"${name.value}-assembly-${version.value}.jar"
+      }
+    },
   )
 
 lazy val spark_embedded = (project in file("spark"))

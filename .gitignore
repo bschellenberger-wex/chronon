@@ -112,3 +112,6 @@ releases/
 
 # Local Maven settings - typically not shared in a project repo
 mvn_settings.xml
+
+# Temporary artifact files
+chronon-artifacts/

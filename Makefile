@@ -19,7 +19,7 @@ $(error VERSION.emr-spark file must exist and contain a version string (e.g., 0.
 endif
 EMR_SPARK_TAG ?= $(EMR_SPARK_VERSION)
 
-.PHONY: lint image-package image-push local-run docker-shell compose-up print-image-info build test prepare-artifacts list-jars promote-artifacts promote-to-subprod promote-to-prod scan-main-app scan-emr-spark scan-all clean-scan-results
+.PHONY: lint image-package image-push local-run docker-shell compose-up print-image-info build test prepare-artifacts list-jars promote-artifacts promote-to-subprod promote-to-prod scan-main-app scan-emr-spark scan-all clean-scan-results clean
 lint:
 	echo "👕 lint"
 	black src
@@ -189,148 +189,118 @@ publish-emr-spark:
 	fi'
 
 # Build configuration
-BAZEL_CONFIGS := --config java_8 --config scala_2.12 --config spark_3.5
 FULL_VERSION ?= $(shell ./.github/scripts/generate_version.sh version)
-GROUP_ID := $(shell source .github/MAVEN_VERSION && echo $$group_id)
 
-# Optional: Set server_javabase for local development (VPN/CA Authority issues)
-# This is required when behind a VPN due to CA Authority certificate issues
-# Usage: make build SERVER_JAVABASE=$JAVA_HOME
-# Usage: make build SERVER_JAVABASE=/path/to/java
-# Usage: make test SERVER_JAVABASE=$JAVA_HOME
-SERVER_JAVABASE ?=
-BAZEL_SERVER_FLAGS := $(if $(SERVER_JAVABASE),--server_javabase=$(SERVER_JAVABASE),)
-
-# Define JAR targets - easily extensible for future JARs
-# Format: TARGET_NAME:BAZEL_TARGET:ARTIFACT_BASE_NAME:OUTPUT_DIR
-JAR_TARGETS := \
-    spark-assembly:spark:spark-assembly_deploy.jar:spark-assembly:spark
+# Build configuration - SBT 
 
 # Helper function to get artifact ID for a given base name
 get-artifact-id = $(shell ./.github/scripts/generate_version.sh artifact_id --name=$(1))
 
-# Build all JAR targets
+# Build all JAR targets using SBT (default, recommended)
+# Usage: make build [SKIP_TESTS=true]
+SKIP_TESTS ?= false
 build:
-	@echo "🚀 Building all Chronon JAR targets with Bazel..."
-	@if [ -n "$(SERVER_JAVABASE)" ]; then \
-	   echo "Using server_javabase: $(SERVER_JAVABASE)"; \
+	@echo "🚀 Building all Chronon JAR targets with SBT (Spark 3.5.5)..."
+	@if [ "$(SKIP_TESTS)" = "true" ]; then \
+		echo "⏭️  Skipping tests"; \
 	fi
-	@for target in $(JAR_TARGETS); do \
-	   IFS=':' read -r name module jar_name artifact_base output_dir <<< "$$target"; \
-	   bazel_target="//$$module:$$jar_name"; \
-	   echo "Building $$name ($$bazel_target)..."; \
-	   bazel $(BAZEL_SERVER_FLAGS) build $(BAZEL_CONFIGS) $$bazel_target; \
-	done
+	@FULL_VERSION=$$(./.github/scripts/generate_version.sh version); \
+	if [ "$(SKIP_TESTS)" = "true" ]; then \
+		bash .github/scripts/build_sbt_jars.sh --version=$$FULL_VERSION --skip-tests; \
+	else \
+		bash .github/scripts/build_sbt_jars.sh --version=$$FULL_VERSION; \
+	fi
 	@echo "✅ All builds completed successfully!"
 
-# Build a specific JAR target
+
+# Build a specific JAR target (SBT)
+# Usage: make build-spark-assembly [SKIP_TESTS=true]
 build-%:
 	@echo "🚀 Building specific JAR target: $*"
-	@if [ -n "$(SERVER_JAVABASE)" ]; then \
-	   echo "Using server_javabase: $(SERVER_JAVABASE)"; \
+	@if [ "$(SKIP_TESTS)" = "true" ]; then \
+		echo "⏭️  Skipping tests"; \
 	fi
-	@for target in $(JAR_TARGETS); do \
-	   IFS=':' read -r name module jar_name artifact_base output_dir <<< "$$target"; \
-	   if [ "$$name" = "$*" ]; then \
-		  bazel_target="//$$module:$$jar_name"; \
-		  echo "Building $$name ($$bazel_target)..."; \
-		  bazel $(BAZEL_SERVER_FLAGS) build $(BAZEL_CONFIGS) $$bazel_target; \
-		  exit 0; \
-	   fi; \
-	done
-	@echo "❌ Error: JAR target '$*' not found. Available targets:"
-	@for target in $(JAR_TARGETS); do \
-	   IFS=':' read -r name module jar_name artifact_base output_dir <<< "$$target"; \
-	   echo "  - $$name"; \
-	done
+	@FULL_VERSION=$$(./.github/scripts/generate_version.sh version); \
+	SKIP_FLAG=""; \
+	if [ "$(SKIP_TESTS)" = "true" ]; then \
+		SKIP_FLAG="--skip-tests"; \
+	fi; \
+	case "$*" in \
+		"spark-assembly"|"spark") \
+			bash .github/scripts/build_sbt_jars.sh --version=$$FULL_VERSION --projects=spark $$SKIP_FLAG ;; \
+		"aws-online"|"aws_online") \
+			bash .github/scripts/build_sbt_jars.sh --version=$$FULL_VERSION --projects=aws_online $$SKIP_FLAG ;; \
+		*) \
+			echo "❌ Error: JAR target '$*' not found."; \
+			echo "Available targets: spark-assembly, aws-online"; \
+			exit 1 ;; \
+	esac
 
-# Run tests for all modules
+# Run tests for all modules (SBT)
 test:
-	@echo "🧪 Running Bazel tests..."
-	@if [ -n "$(SERVER_JAVABASE)" ]; then \
-	   echo "Using server_javabase: $(SERVER_JAVABASE)"; \
-	fi
-	bazel $(BAZEL_SERVER_FLAGS) test $(BAZEL_CONFIGS) //spark:test
+	@echo "🧪 Running SBT tests..."
+	@FULL_VERSION=$$(./.github/scripts/generate_version.sh version); \
+	bash .github/scripts/build_sbt_jars.sh --version=$$FULL_VERSION
 	@echo "✅ All tests passed! 🎉"
 
-# Prepare artifacts for all JAR targets
-prepare-artifacts: build
+# Prepare artifacts for all JAR targets (SBT-based)
+# Usage: make prepare-artifacts [FORCE_REBUILD=true]
+#   FORCE_REBUILD=true: Force rebuild even if JARs exist (default: false)
+FORCE_REBUILD ?= false
+prepare-artifacts:
 	@echo "📝 Preparing Maven artifacts for all JAR targets..."
+	@# Check if JARs exist, build if missing or FORCE_REBUILD=true
+	@FULL_VERSION=$$(./.github/scripts/generate_version.sh version); \
+	BUILD_DIR="$${CHRONON_BUILD_DIR:-build}"; \
+	SPARK_JAR=$$(find "$$BUILD_DIR/jars" -name "spark_uber-assembly-*.jar" -type f 2>/dev/null | head -1); \
+	AWS_JAR=$$(find "$$BUILD_DIR/jars" -name "aws-online_2.12*.jar" -type f 2>/dev/null | head -1); \
+	if [ "$(FORCE_REBUILD)" = "true" ] || [ -z "$$SPARK_JAR" ] || [ -z "$$AWS_JAR" ]; then \
+		echo "🔨 Building JARs (FORCE_REBUILD=$(FORCE_REBUILD), Spark=$$([ -n "$$SPARK_JAR" ] && echo "exists" || echo "missing"), AWS=$$([ -n "$$AWS_JAR" ] && echo "exists" || echo "missing"))..."; \
+		$(MAKE) build SKIP_TESTS=true; \
+	else \
+		echo "✅ JARs already built, skipping build step"; \
+	fi
 	@# Create a clean artifacts directory
 	@rm -rf chronon-artifacts
 	@mkdir -p chronon-artifacts
-	@for target in $(JAR_TARGETS); do \
-	   IFS=':' read -r name module jar_name artifact_base output_dir <<< "$$target"; \
-	   bazel_target="//$$module:$$jar_name"; \
-	   artifact_id=$$(./.github/scripts/generate_version.sh artifact_id --name=$$artifact_base); \
-	   echo "Processing $$name ($$artifact_id)..."; \
-	   $(MAKE) prepare-artifact JAR_NAME=$$name BAZEL_TARGET=$$bazel_target ARTIFACT_BASE=$$artifact_base OUTPUT_DIR=$$output_dir ARTIFACT_ID=$$artifact_id; \
-	done
+	@# Prepare spark-assembly artifacts (SBT build)
+	@$(MAKE) prepare-artifact-spark-assembly FORCE_REBUILD=false
+	@# Prepare aws_online artifacts (SBT build)
+	@$(MAKE) prepare-artifact-aws-online FORCE_REBUILD=false
 	@echo "✅ All Maven artifacts prepared successfully!"
-	@# Generate artifact manifest for GitHub Actions
-	@echo "📋 Generating artifact manifest..."
-	@echo "# Chronon Artifact Manifest" > chronon-artifacts/ARTIFACT_MANIFEST.txt
-	@echo "# Generated on: $$(date)" >> chronon-artifacts/ARTIFACT_MANIFEST.txt
-	@echo "# Full Version: $(FULL_VERSION)" >> chronon-artifacts/ARTIFACT_MANIFEST.txt
-	@echo "# Group ID: $(GROUP_ID)" >> chronon-artifacts/ARTIFACT_MANIFEST.txt
-	@echo "" >> chronon-artifacts/ARTIFACT_MANIFEST.txt
-	@for target in $(JAR_TARGETS); do \
-	   IFS=':' read -r name module jar_name artifact_base output_dir <<< "$$target"; \
-	   artifact_id=$$(./.github/scripts/generate_version.sh artifact_id --name=$$artifact_base); \
-	   echo "ARTIFACT_ID=$$artifact_id" >> chronon-artifacts/ARTIFACT_MANIFEST.txt; \
-	   echo "JAR_FILE=$$artifact_id-$(FULL_VERSION).jar" >> chronon-artifacts/ARTIFACT_MANIFEST.txt; \
-	   echo "POM_FILE=$$artifact_id-$(FULL_VERSION).pom" >> chronon-artifacts/ARTIFACT_MANIFEST.txt; \
-	   echo "CHECKSUM_FILE=$$artifact_id-$(FULL_VERSION).jar.sha256" >> chronon-artifacts/ARTIFACT_MANIFEST.txt; \
-	   echo "" >> chronon-artifacts/ARTIFACT_MANIFEST.txt; \
-	done
+	@# Generate artifact manifest in INI format for GitHub Actions
+	@bash ./.github/scripts/generate_manifest.sh
 	@echo "📦 Artifacts ready in chronon-artifacts/:"
 	@ls -la chronon-artifacts/
 	@echo ""
 	@echo "📋 Artifact manifest:"
-	@cat chronon-artifacts/ARTIFACT_MANIFEST.txt
+	@cat chronon-artifacts/ARTIFACT_MANIFEST.ini
 
 # Prepare artifacts for a specific JAR target
 prepare-artifact-%: build-%
 	@echo "📝 Preparing Maven artifacts for JAR target: $*"
-	@for target in $(JAR_TARGETS); do \
-	   IFS=':' read -r name module jar_name artifact_base output_dir <<< "$$target"; \
-	   if [ "$$name" = "$*" ]; then \
-		  bazel_target="//$$module:$$jar_name"; \
-		  artifact_id=$$(./.github/scripts/generate_version.sh artifact_id --name=$$artifact_base); \
-		  $(MAKE) prepare-artifact JAR_NAME=$$name BAZEL_TARGET=$$bazel_target ARTIFACT_BASE=$$artifact_base OUTPUT_DIR=$$output_dir ARTIFACT_ID=$$artifact_id; \
-		  exit 0; \
-	   fi; \
-	done
-	@echo "❌ Error: JAR target '$*' not found."
-
-# Internal target to prepare a single artifact
-prepare-artifact:
-	@echo "  📦 Preparing $(JAR_NAME) artifacts..."
-	@echo "    Artifact ID: $(ARTIFACT_ID)"
-	@echo "    Full version: $(FULL_VERSION)"
-	@echo "    Group ID: $(GROUP_ID)"
-	# Generate POM file from template
-	sed -e "s/{{GROUP_ID}}/$(GROUP_ID)/g" \
-		-e "s/{{ARTIFACT_ID}}/$(ARTIFACT_ID)/g" \
-		-e "s/{{VERSION}}/$(FULL_VERSION)/g" \
-		".github/wex.pom.xml.tpl" > "chronon-artifacts/$(ARTIFACT_ID)-$(FULL_VERSION).pom"
-	# Copy and rename JAR to Maven convention in chronon-artifacts
-	cp "bazel-bin/$(OUTPUT_DIR)/$(shell echo $(BAZEL_TARGET) | sed 's|.*:||')" "chronon-artifacts/$(ARTIFACT_ID)-$(FULL_VERSION).jar"
-	# Generate checksum in chronon-artifacts
-	(cd chronon-artifacts && sha256sum "$(ARTIFACT_ID)-$(FULL_VERSION).jar" > "$(ARTIFACT_ID)-$(FULL_VERSION).jar.sha256")
-	@echo "    ✅ $(JAR_NAME) artifacts prepared"
-	@echo "    Generated files:"
-	@ls -la chronon-artifacts/$(ARTIFACT_ID)-$(FULL_VERSION).*
+	@case "$*" in \
+		"spark-assembly"|"spark") \
+			$(MAKE) prepare-artifact-spark-assembly ;; \
+		"aws-online"|"aws_online") \
+			$(MAKE) prepare-artifact-aws-online ;; \
+		*) \
+			echo "❌ Error: JAR target '$*' not found."; \
+			echo "Available targets: spark-assembly, aws-online"; \
+			exit 1 ;; \
+	esac
 
 # List available JAR targets
 list-jars:
 	@echo "Available JAR targets:"
-	@for target in $(JAR_TARGETS); do \
-	   IFS=':' read -r name module jar_name artifact_base output_dir <<< "$$target"; \
-	   bazel_target="//$$module:$$jar_name"; \
-	   artifact_id=$$(./.github/scripts/generate_version.sh artifact_id --name=$$artifact_base); \
-	   echo "  - $$name: $$artifact_id ($$bazel_target)"; \
-	done
+	@echo ""
+	@echo "SBT-based"
+	@echo "  - spark-assembly: $$(./.github/scripts/generate_version.sh artifact_id --name=spark-assembly) (SBT: spark_uber)"
+	@echo "  - aws-online: $$(./.github/scripts/generate_version.sh artifact_id --name=aws-online) (SBT: aws_online)"
+	@echo ""
+	@echo "Usage:"
+	@echo "  make build              # Build all with SBT (default)"
+	@echo "  make build-spark-assembly  # Build spark with SBT"
 
 # Deploy Spark Assembly JAR to S3
 S3_BUCKET ?=
@@ -393,7 +363,7 @@ deploy-spark-jar-s3: find-spark-jar
 	   echo "🚀 Uploading $$JAR_FILENAME to S3..."; \
 	   echo "Source: $$JAR_FILE"; \
 	   echo "Destination: $$S3_PATH"; \
-	   (cd "$$JAR_DIRNAME" && aws s3 cp "$$JAR_FILENAME" "$$S3_PATH" --region $(S3_REGION)); \
+	   (cd "$$JAR_DIRNAME" && aws s3 cp "$$JAR_FILENAME" "$$S3_PATH"); \
 	   if [ $$? -eq 0 ]; then \
 		  echo "✅ Successfully uploaded to $$S3_PATH"; \
 	   else \
@@ -409,6 +379,64 @@ deploy-spark-jar-s3: find-spark-jar
 	GIT_HASH=$$(git rev-parse --short HEAD 2>/dev/null || echo "N/A"); \
 	echo "- Git Hash: $$GIT_HASH"
 
+# Helper to find the aws-online EMR JAR
+find-aws-online-jar:
+	@echo "🔍 Looking for aws-online EMR JAR in chronon-artifacts..."
+	@JAR_FILE=$$(find chronon-artifacts -type f -name "*aws-online*-emr.jar" | grep -v '.sha256' | head -1); \
+	if [ -z "$$JAR_FILE" ]; then \
+	   echo "❌ Error: No aws-online EMR JAR found in chronon-artifacts/"; \
+	   echo "Available files:"; \
+	   ls -la chronon-artifacts/ || echo "chronon-artifacts directory not found"; \
+	   echo ""; \
+	   echo "💡 Hint: Run 'make prepare-artifacts' or 'make prepare-artifact-aws-online' first to generate the JAR files."; \
+	   exit 1; \
+	else \
+	   echo "✅ Found JAR: $$JAR_FILE"; \
+	   JAR_SIZE=$$(stat -f%z "$$JAR_FILE" 2>/dev/null || stat -c%s "$$JAR_FILE" 2>/dev/null); \
+	   echo "JAR_FILE=$$JAR_FILE" > .aws_online_jar_info; \
+	   echo "JAR_SIZE=$$JAR_SIZE" >> .aws_online_jar_info; \
+	   echo "📦 JAR size: $$JAR_SIZE bytes"; \
+	fi
+
+# Deploy aws-online EMR JAR target
+.PHONY: deploy-aws-online-jar-s3
+
+deploy-aws-online-jar-s3: find-aws-online-jar
+	@. .aws_online_jar_info; \
+	JAR_FILENAME=$$(basename "$$JAR_FILE"); \
+	JAR_DIRNAME=$$(dirname "$$JAR_FILE"); \
+	S3_PATH="s3://$(S3_BUCKET)/$(S3_PREFIX)/$$JAR_FILENAME"; \
+	if [ "$(DRY_RUN)" = "true" ]; then \
+	   echo "🔍 DRY RUN - Would upload:"; \
+	   echo "  Source: $$JAR_FILE"; \
+	   echo "  Destination: $$S3_PATH"; \
+	   echo "  Size: $$JAR_SIZE bytes"; \
+	else \
+	   echo "🚀 Uploading $$JAR_FILENAME to S3..."; \
+	   echo "Source: $$JAR_FILE"; \
+	   echo "Destination: $$S3_PATH"; \
+	   (cd "$$JAR_DIRNAME" && aws s3 cp "$$JAR_FILENAME" "$$S3_PATH"); \
+	   if [ $$? -eq 0 ]; then \
+		  echo "✅ Successfully uploaded to $$S3_PATH"; \
+	   else \
+		  echo "❌ Upload failed"; \
+		  exit 1; \
+	   fi; \
+	fi; \
+	echo "--- Deployment Summary ---"; \
+	echo "- S3 Bucket: $(S3_BUCKET)"; \
+	echo "- S3 Prefix: $(S3_PREFIX)"; \
+	echo "- JAR File: $$JAR_FILENAME"; \
+	echo "- JAR Size: $$JAR_SIZE bytes"; \
+	GIT_HASH=$$(git rev-parse --short HEAD 2>/dev/null || echo "N/A"); \
+	echo "- Git Hash: $$GIT_HASH"
+
+# Deploy all JARs to S3 (spark-assembly and aws-online EMR)
+.PHONY: deploy-all-jars-s3
+
+deploy-all-jars-s3: deploy-spark-jar-s3 deploy-aws-online-jar-s3
+	@echo "✅ All JARs deployed successfully!"
+
 # Artifactory Repository Promotion Targets
 # These targets handle the staged promotion process: subprod -> prod
 
@@ -419,8 +447,8 @@ promote-artifacts: promote-to-subprod promote-to-prod
 # Promote artifacts to subprod repository
 promote-to-subprod:
 	@echo "🚀 Promoting artifacts to $(ARTIFACTORY_SUBPROD_REPO)..."
-	@if [ ! -f "chronon-artifacts/ARTIFACT_MANIFEST.txt" ]; then \
-	   echo "❌ Error: ARTIFACT_MANIFEST.txt not found. Run 'make prepare-artifacts' first."; \
+	@if [ ! -f "chronon-artifacts/ARTIFACT_MANIFEST.ini" ]; then \
+	   echo "❌ Error: ARTIFACT_MANIFEST.ini not found. Run 'make prepare-artifacts' first."; \
 	   exit 1; \
 	fi
 	@$(MAKE) _upload-to-repo REPO=$(ARTIFACTORY_SUBPROD_REPO)
@@ -429,89 +457,24 @@ promote-to-subprod:
 # Promote artifacts from subprod to prod using JFrog CLI copy
 promote-to-prod:
 	@echo "🚀 Promoting artifacts from $(ARTIFACTORY_SUBPROD_REPO) to $(ARTIFACTORY_PROD_REPO)..."
-	@if [ ! -f "chronon-artifacts/ARTIFACT_MANIFEST.txt" ]; then \
-	   echo "❌ Error: ARTIFACT_MANIFEST.txt not found. Run 'make prepare-artifacts' first."; \
+	@if [ ! -f "chronon-artifacts/ARTIFACT_MANIFEST.ini" ]; then \
+	   echo "❌ Error: ARTIFACT_MANIFEST.ini not found. Run 'make prepare-artifacts' first."; \
 	   exit 1; \
 	fi
 	@$(MAKE) _copy-to-prod
 	@echo "✅ Successfully promoted to $(ARTIFACTORY_PROD_REPO)"
 
 # Internal target to upload artifacts to a specific repository
+# Parses INI format manifest and uploads each artifact
 _upload-to-repo:
-	@echo "📦 Uploading artifacts to $(REPO)..."
-	@DRY_RUN_FLAG=""; \
-	if [ "$(DRY_RUN)" = "true" ]; then \
-	   DRY_RUN_FLAG="--dry-run"; \
-	fi; \
-	GROUP_PATH="$(shell echo '$(GROUP_ID)' | tr . /)"; \
-	while IFS='=' read -r key value; do \
-	   if [[ "$$key" == "ARTIFACT_ID" ]]; then \
-		  ARTIFACT_ID="$$value"; \
-	   elif [[ "$$key" == "JAR_FILE" ]]; then \
-		  JAR_FILE="$$value"; \
-	   elif [[ "$$key" == "POM_FILE" ]]; then \
-		  POM_FILE="$$value"; \
-	   elif [[ "$$key" == "CHECKSUM_FILE" ]]; then \
-		  CHECKSUM_FILE="$$value"; \
-		  echo "  Processing artifact: $$ARTIFACT_ID"; \
-		  JAR_PATH="$(REPO)/$$GROUP_PATH/$$ARTIFACT_ID/$(FULL_VERSION)/$$JAR_FILE"; \
-		  POM_PATH="$(REPO)/$$GROUP_PATH/$$ARTIFACT_ID/$(FULL_VERSION)/$$POM_FILE"; \
-		  \
-		  if [ "$(FORCE_OVERWRITE)" = "false" ] && [ -z "$$DRY_RUN_FLAG" ]; then \
-			 if jf rt s "$$JAR_PATH" | grep -q '"path"'; then \
-				echo "    ❌ Artifact already exists at $$JAR_PATH. Failing as force_overwrite is false."; \
-				exit 1; \
-			 fi; \
-		  fi; \
-		  \
-		  echo "    🚀 Uploading to $(REPO)..."; \
-		  jf rt u $$DRY_RUN_FLAG "chronon-artifacts/$$JAR_FILE" "$$JAR_PATH"; \
-		  if [ -f "chronon-artifacts/$$POM_FILE" ]; then \
-			 jf rt u $$DRY_RUN_FLAG "chronon-artifacts/$$POM_FILE" "$$POM_PATH"; \
-		  fi; \
-		  echo "    ✅ Completed $$ARTIFACT_ID"; \
-	   fi; \
-	done < chronon-artifacts/ARTIFACT_MANIFEST.txt
+	@bash ./.github/scripts/upload_artifacts.sh "$(REPO)" "$(DRY_RUN)" "$(FORCE_OVERWRITE)"
 
 # Internal target to copy artifacts from subprod to prod using JFrog CLI
+# Parses INI format manifest and copies each artifact
 _copy-to-prod:
-	@echo "📋 Copying artifacts from $(ARTIFACTORY_SUBPROD_REPO) to $(ARTIFACTORY_PROD_REPO)..."
-	@DRY_RUN_FLAG=""; \
-	if [ "$(DRY_RUN)" = "true" ]; then \
-	   DRY_RUN_FLAG="--dry-run"; \
-	fi; \
-	GROUP_PATH="$(shell echo '$(GROUP_ID)' | tr . /)"; \
-	while IFS='=' read -r key value; do \
-	   if [[ "$$key" == "ARTIFACT_ID" ]]; then \
-		  ARTIFACT_ID="$$value"; \
-	   elif [[ "$$key" == "JAR_FILE" ]]; then \
-		  JAR_FILE="$$value"; \
-	   elif [[ "$$key" == "POM_FILE" ]]; then \
-		  POM_FILE="$$value"; \
-	   elif [[ "$$key" == "CHECKSUM_FILE" ]]; then \
-		  CHECKSUM_FILE="$$value"; \
-		  echo "  Copying artifact: $$ARTIFACT_ID"; \
-		  SOURCE_JAR_PATH="$(ARTIFACTORY_SUBPROD_REPO)/$$GROUP_PATH/$$ARTIFACT_ID/$(FULL_VERSION)/$$JAR_FILE"; \
-		  TARGET_JAR_PATH="$(ARTIFACTORY_PROD_REPO)/$$GROUP_PATH/$$ARTIFACT_ID/$(FULL_VERSION)/$$JAR_FILE"; \
-		  SOURCE_POM_PATH="$(ARTIFACTORY_SUBPROD_REPO)/$$GROUP_PATH/$$ARTIFACT_ID/$(FULL_VERSION)/$$POM_FILE"; \
-		  TARGET_POM_PATH="$(ARTIFACTORY_PROD_REPO)/$$GROUP_PATH/$$ARTIFACT_ID/$(FULL_VERSION)/$$POM_FILE"; \
-		  \
-		  if [ "$(FORCE_OVERWRITE)" = "false" ] && [ -z "$$DRY_RUN_FLAG" ]; then \
-			 if jf rt s "$$TARGET_JAR_PATH" | grep -q '"path"'; then \
-				echo "    ❌ Artifact already exists at $$TARGET_JAR_PATH. Failing as force_overwrite is false."; \
-				exit 1; \
-			 fi; \
-		  fi; \
-		  \
-		  echo "    🔄 Copying JAR from subprod to prod..."; \
-		  jf rt cp $$DRY_RUN_FLAG "$$SOURCE_JAR_PATH" "$(ARTIFACTORY_PROD_REPO)/"; \
-		  if jf rt s "$$SOURCE_POM_PATH" | grep -q '"path"'; then \
-			 echo "    🔄 Copying POM from subprod to prod..."; \
-			 jf rt cp $$DRY_RUN_FLAG "$$SOURCE_POM_PATH" "$(ARTIFACTORY_PROD_REPO)/"; \
-		  fi; \
-		  echo "    ✅ Completed copying $$ARTIFACT_ID"; \
-	   fi; \
-	done < chronon-artifacts/ARTIFACT_MANIFEST.txt
+	@ARTIFACTORY_SUBPROD_REPO="$(ARTIFACTORY_SUBPROD_REPO)" \
+	 ARTIFACTORY_PROD_REPO="$(ARTIFACTORY_PROD_REPO)" \
+	 bash ./.github/scripts/copy_artifacts.sh "$(DRY_RUN)" "$(FORCE_OVERWRITE)"
 
 # ==============================================================================
 # JFROG SECURITY SCANNING TARGETS
@@ -577,11 +540,90 @@ clean-scan-results:
 
 # Build all aws_online JARs (slim, EMR medium, Spring shaded)
 # Usage: make build-aws-online [ARGS="--publish-local --delete"]
-#   --publish-local  Build all JARs and publish the shaded JAR to local Maven repository
-#   --delete         Delete the artifact from local Maven repository (if used alone, only deletes and exits)
+#   --publish-local  Build all JARs and publish the shaded JAR to local Maven repository (uses old script)
+#   --delete         Delete the artifact from local Maven repository (uses old script)
+#   If no ARGS provided, uses unified build script
 .PHONY: build-aws-online
 build-aws-online:
 	@echo "🏗️  Building all aws_online JARs..."
-	@bash .github/scripts/build_aws_online_jars.sh $(ARGS)
+	@FULL_VERSION=$$(./.github/scripts/generate_version.sh version); \
+	if [ -n "$(ARGS)" ]; then \
+		# Use old script for --publish-local and --delete options \
+		bash .github/scripts/build_aws_online_jars.sh --version=$$FULL_VERSION $(ARGS); \
+	else \
+		# Use unified script for standard builds \
+		bash .github/scripts/build_sbt_jars.sh --version=$$FULL_VERSION --projects=aws_online; \
+	fi
 	@echo "✅ aws_online JAR build completed!"
+
+# Prepare spark-assembly artifacts for Maven publishing
+# SBT builds spark_uber project which outputs: spark_uber-assembly-{version}.jar
+.PHONY: prepare-artifact-spark-assembly
+# Usage: make prepare-artifact-spark-assembly [FORCE_REBUILD=true]
+prepare-artifact-spark-assembly:
+	@# Only build if JAR doesn't exist or FORCE_REBUILD is true
+	@FULL_VERSION=$$(./.github/scripts/generate_version.sh version); \
+	BUILD_DIR="$${CHRONON_BUILD_DIR:-build}"; \
+	SPARK_JAR=$$(find "$$BUILD_DIR/jars" -name "spark_uber-assembly-*.jar" -type f 2>/dev/null | head -1); \
+	if [ "$(FORCE_REBUILD)" = "true" ] || [ -z "$$SPARK_JAR" ]; then \
+		echo "🔨 Building spark-assembly JAR..."; \
+		$(MAKE) build-spark-assembly SKIP_TESTS=true; \
+	fi
+	@echo "📝 Preparing Maven artifacts for spark-assembly JAR..."; \
+	FULL_VERSION=$$(./.github/scripts/generate_version.sh version); \
+	ARTIFACT_ID=$$(./.github/scripts/generate_version.sh artifact_id --name=spark-assembly); \
+	GROUP_ID=$$(awk -F= '/^group_id/ {print $$2}' .github/MAVEN_VERSION | tr -d ' "'); \
+	BUILD_DIR="$${CHRONON_BUILD_DIR:-build}"; \
+	SBT_JAR=$$(find "$$BUILD_DIR/jars" -name "spark_uber-assembly-*.jar" -type f 2>/dev/null | head -1); \
+	if [ -n "$$SBT_JAR" ] && [ -f "$$SBT_JAR" ]; then \
+		echo "  📦 Processing spark-assembly JAR: $$(basename $$SBT_JAR)"; \
+		cp "$$SBT_JAR" "chronon-artifacts/$$ARTIFACT_ID-$$FULL_VERSION.jar"; \
+		sed -e "s/{{GROUP_ID}}/$$GROUP_ID/g" \
+			-e "s/{{ARTIFACT_ID}}/$$ARTIFACT_ID/g" \
+			-e "s/{{VERSION}}/$$FULL_VERSION/g" \
+			".github/wex.pom.xml.tpl" > "chronon-artifacts/$$ARTIFACT_ID-$$FULL_VERSION.pom"; \
+		(cd chronon-artifacts && sha256sum "$$ARTIFACT_ID-$$FULL_VERSION.jar" > "$$ARTIFACT_ID-$$FULL_VERSION.jar.sha256"); \
+		echo "    ✅ Spark-assembly JAR prepared"; \
+		echo "✅ spark-assembly artifacts prepared successfully!"; \
+	else \
+		echo "    ❌ Spark-assembly JAR not found: $$SBT_JAR"; \
+		echo "    Looking in: $$BUILD_DIR/jars/"; \
+		ls -lh "$$BUILD_DIR/jars"/*.jar 2>/dev/null || echo "      No JARs found"; \
+		exit 1; \
+	fi
+
+# Prepare aws_online artifacts for Maven publishing
+# Similar to prepare-artifact-spark-assembly but for aws_online JARs
+# Usage: make prepare-artifact-aws-online [FORCE_REBUILD=true]
+.PHONY: prepare-artifact-aws-online
+prepare-artifact-aws-online:
+	@bash ./.github/scripts/prepare_aws_online.sh "$(FORCE_REBUILD)"
+
+# Clean build artifacts and generated files
+# Usage: make clean
+# Removes:
+#   - SBT build artifacts (via sbt clean)
+#   - CHRONON_BUILD_DIR (default: build/)
+#   - chronon-artifacts/ directory (including manifest)
+.PHONY: clean
+clean:
+	@echo "🧹 Cleaning build artifacts and generated files..."
+	@echo "Running SBT clean..."
+	@sbt clean || echo "⚠️  SBT clean failed or SBT not available, continuing..."
+	@BUILD_DIR="$${CHRONON_BUILD_DIR:-build}"; \
+	if [ -d "$$BUILD_DIR" ]; then \
+		echo "Removing build directory: $$BUILD_DIR"; \
+		rm -rf "$$BUILD_DIR"; \
+		echo "  ✅ Removed $$BUILD_DIR"; \
+	else \
+		echo "  ℹ️  Build directory not found: $$BUILD_DIR"; \
+	fi
+	@if [ -d "chronon-artifacts" ]; then \
+		echo "Removing chronon-artifacts directory..."; \
+		rm -rf chronon-artifacts; \
+		echo "  ✅ Removed chronon-artifacts/"; \
+	else \
+		echo "  ℹ️  chronon-artifacts/ directory not found"; \
+	fi
+	@echo "✅ Clean complete!"
 

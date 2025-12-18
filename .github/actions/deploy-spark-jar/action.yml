@@ -1,5 +1,5 @@
-name: "Deploy Spark Assembly JAR to S3"
-description: "Package and upload spark-assembly JAR to S3 with optional dry-run and debug"
+name: "Deploy Chronon JARs to S3"
+description: "Package and upload all Chronon JARs (spark-assembly and aws-online EMR) to S3 with optional dry-run and debug"
 
 inputs:
   bucket:
@@ -22,4 +22,4 @@ runs:
       run: |
         set -euo pipefail
         echo "🔗 Delegating S3 deployment to Makefile..."
-        make deploy-spark-jar-s3 S3_BUCKET="${{ inputs.bucket }}" S3_PREFIX="${{ inputs.prefix }}" DRY_RUN="${{ inputs.dry_run }}"
+        make deploy-all-jars-s3 S3_BUCKET="${{ inputs.bucket }}" S3_PREFIX="${{ inputs.prefix }}" DRY_RUN="${{ inputs.dry_run }}"

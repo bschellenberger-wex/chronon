@@ -13,7 +13,7 @@ MAVEN_VERSION_FILE="$PROJECT_ROOT/.github/MAVEN_VERSION"
 # Default values
 BASE_VERSION="0.0.1"
 SCALA_VERSION=2.12
-SPARK_VERSION=3.5
+SPARK_VERSION=3.5.5
 GROUP_ID="${GROUP_ID:-com.wex.chronon}"
 
 # Load version from MAVEN_VERSION file if it exists
@@ -40,16 +40,36 @@ generate_version() {
     echo "${BASE_VERSION}"
 }
 
+# Function to extract major.minor version from full version (e.g., 3.5.5 -> 3.5)
+# This matches the previous Bazel behavior which used major.minor for artifact naming
+extract_major_minor_version() {
+    local full_version="$1"
+    # Extract major.minor (e.g., 3.5.5 -> 3.5, 3.1.1 -> 3.1)
+    echo "$full_version" | sed -E 's/^([0-9]+\.[0-9]+)\.[0-9]+.*/\1/'
+}
+
 # Function to generate artifactId
 # For 'spark-assembly': spark-assembly_{spark.version}_scala_{scala.version}
+#   - Uses major.minor version (e.g., 3.5) to match previous Bazel behavior
+# For 'aws-online': aws-online_spark-{spark.version}_scala_{scala.version}
+#   - Uses major.minor version (e.g., 3.5) with 'spark-' prefix for clarity
+#   - Default artifact is slim JAR (no classifier)
+#   - EMR JAR has 'emr' classifier
+#   - Shaded JAR has 'shaded' classifier
 # For other artifacts: {base_name}_scala_{scala.version}
 generate_artifact_id() {
     local spark_ver="$1"
     local scala_ver="$2"
-    local base_name="${3:-spark-assembly}" # The base name of the artifact, e.g., 'spark-assembly', 'online-lib'
+    local base_name="${3:-spark-assembly}" # The base name of the artifact, e.g., 'spark-assembly', 'aws-online'
 
     if [ "$base_name" = "spark-assembly" ]; then
-        echo "spark-assembly_${spark_ver}_scala_${scala_ver}"
+        # Extract major.minor version to match previous Bazel behavior (3.5.5 -> 3.5)
+        local spark_major_minor=$(extract_major_minor_version "$spark_ver")
+        echo "spark-assembly_${spark_major_minor}_scala_${scala_ver}"
+    elif [ "$base_name" = "aws-online" ]; then
+        # Use spark- prefix for aws-online: aws-online_spark-3.5_scala_2.12 (using major.minor Spark version with spark- prefix)
+        local spark_major_minor=$(extract_major_minor_version "$spark_ver")
+        echo "aws-online_spark-${spark_major_minor}_scala_${scala_ver}"
     else
         echo "${base_name}_scala_${scala_ver}"
     fi

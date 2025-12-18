@@ -13,6 +13,7 @@
 
 # Repository Governance & Automation
 .github/ @wexinc/ai-platform-admins
+.gitignore @wexinc/ai-platform-admins
 opslevel.yml @wexinc/ai-platform-admins
 
 # Build System (Bazel)

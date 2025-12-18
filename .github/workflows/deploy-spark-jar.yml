@@ -28,10 +28,10 @@ jobs:
       - name: Download built Chronon JARs
         uses: actions/download-artifact@v4
         with:
-          name: chronon-bazel-jars
+          name: chronon-jars
           path: chronon-artifacts
 
-      - name: Deploy Spark Assembly JAR to S3
+      - name: Deploy Chronon JARs to S3
         uses: ./.github/actions/deploy-spark-jar
         with:
           bucket: ${{ inputs.bucket }}
