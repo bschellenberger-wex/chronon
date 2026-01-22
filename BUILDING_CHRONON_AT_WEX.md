@@ -22,8 +22,6 @@
 
 This document outlines the process for building Chronon artifacts at WEX. The project uses **SBT** as the build system and requires **Java 1.8** for compilation. Due to specific version requirements for Spark, it's necessary to build Chronon from source to ensure compatibility.
 
-> **Note**: This project migrated from Bazel to SBT. For migration context, see [MIGRATION_TO_SBT.md](MIGRATION_TO_SBT.md).
-
 ## Prerequisites
 
 - **Install SDKMAN**: SDKMAN is required for managing Java versions. Install it following the [official instructions](https://sdkman.io/install):
