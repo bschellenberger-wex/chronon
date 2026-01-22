@@ -628,49 +628,85 @@ clean:
 	fi
 	@echo "✅ Clean complete!"
 
+# Pre-flight check: Verify JAVA_HOME is set and matches .sdkmanrc
+.PHONY: check-java
+check-java:
+	@echo "🔍 Checking Java environment..."
+	@if [ -z "$$JAVA_HOME" ]; then \
+		echo "❌ ERROR: JAVA_HOME is not set."; \
+		echo ""; \
+		echo "Please install SDKMAN and run:"; \
+		echo "  sdk env install  # Install Java version from .sdkmanrc"; \
+		echo "  sdk env          # Activate Java version"; \
+		echo ""; \
+		echo "Or set JAVA_HOME manually to your Java 8 installation."; \
+		exit 1; \
+	fi
+	@if [ ! -d "$$JAVA_HOME" ]; then \
+		echo "❌ ERROR: JAVA_HOME points to non-existent directory: $$JAVA_HOME"; \
+		exit 1; \
+	fi
+	@if [ ! -x "$$JAVA_HOME/bin/java" ]; then \
+		echo "❌ ERROR: Java executable not found at $$JAVA_HOME/bin/java"; \
+		exit 1; \
+	fi
+	@EXPECTED_VERSION=$$(grep '^java=' .sdkmanrc 2>/dev/null | sed 's/^java=[[:space:]]*//' | cut -d'-' -f1 | tr -d ' ' || echo ""); \
+	if [ -n "$$EXPECTED_VERSION" ]; then \
+		ACTUAL_VERSION_OUTPUT=$$("$$JAVA_HOME/bin/java" -version 2>&1 | head -n1); \
+		ACTUAL_VERSION=$$(echo "$$ACTUAL_VERSION_OUTPUT" | sed -E 's/.*version "([0-9]+\.[0-9]+(\.[0-9]+)?).*/\1/'); \
+		EXPECTED_MAJOR=$$(echo "$$EXPECTED_VERSION" | cut -d'.' -f1); \
+		ACTUAL_MAJOR=$$(echo "$$ACTUAL_VERSION" | cut -d'.' -f1); \
+		ACTUAL_MINOR=$$(echo "$$ACTUAL_VERSION" | cut -d'.' -f2); \
+		if [ "$$ACTUAL_MAJOR" = "1" ] && [ "$$ACTUAL_MINOR" = "8" ]; then \
+			ACTUAL_MAJOR="8"; \
+		fi; \
+		if [ "$$ACTUAL_MAJOR" != "$$EXPECTED_MAJOR" ]; then \
+			echo "❌ ERROR: Java version mismatch!"; \
+			echo "  Expected: Java $$EXPECTED_MAJOR.x (from .sdkmanrc)"; \
+			echo "  Actual:   Java $$ACTUAL_VERSION (from $$JAVA_HOME)"; \
+			echo ""; \
+			echo "Please run: sdk env"; \
+			exit 1; \
+		fi; \
+	fi
+	@echo "✅ Java environment OK: $$JAVA_HOME"
+	@echo "   Version: $$("$$JAVA_HOME/bin/java" -version 2>&1 | head -n1)"
+
 # Setup JVM CA Certificates
 # Imports Zero Trust CA certificates into the JVM keystore for build configuration.
-# Supports Java 8+ (auto-detects cacerts location).
+# Uses JAVA_HOME from SDKMAN (set via .sdkmanrc and 'sdk env').
 # See: docs/zero-trust-ca-setup.md for complete documentation.
 #
 # REQUIRED PARAMETERS:
-#   JVM_HOME=/path/to/java/home    Path to the JVM to configure
-#   PEM_BUNDLE=/path/to/bundle.pem Path to the PEM certificate bundle
+#   PEM_BUNDLE=/path/to/bundle.pem    Path to the PEM certificate bundle
 #
 # OPTIONAL PARAMETERS:
 #   VERBOSE=1   Show detailed output
 #   DRY_RUN=1   Preview changes without modifying cacerts
 #
 # Examples:
-#   make setup-jvm-cas JVM_HOME=/path/to/java/home PEM_BUNDLE=~/certs/bundle.pem
-#   make setup-jvm-cas JVM_HOME=/path/to/java/home PEM_BUNDLE=~/certs/bundle.pem DRY_RUN=1
-#   make setup-jvm-cas JVM_HOME=/path/to/java/home PEM_BUNDLE=~/certs/bundle.pem VERBOSE=1
+#   make setup-jvm-cas PEM_BUNDLE=~/certs/bundle.pem
+#   make setup-jvm-cas PEM_BUNDLE=~/certs/bundle.pem DRY_RUN=1
+#   make setup-jvm-cas PEM_BUNDLE=~/certs/bundle.pem VERBOSE=1
 #
 .PHONY: setup-jvm-cas
-setup-jvm-cas:
+setup-jvm-cas: check-java
 	@echo "Setting up Zero Trust JVM CA certificates..."
 	@set -euo pipefail; \
-	JVM_HOME_VAL="${JVM_HOME}"; \
 	PEM_BUNDLE_VAL="${PEM_BUNDLE}"; \
-	if [ -z "$$JVM_HOME_VAL" ]; then \
-	  echo "ERROR: JVM_HOME is required."; \
-	  echo "Usage: make setup-jvm-cas JVM_HOME=/path/to/java/home PEM_BUNDLE=/path/to/bundle.pem"; \
-	  exit 1; \
-	fi; \
 	if [ -z "$$PEM_BUNDLE_VAL" ]; then \
 	  echo "ERROR: PEM_BUNDLE is required."; \
-	  echo "Usage: make setup-jvm-cas JVM_HOME=/path/to/java/home PEM_BUNDLE=/path/to/bundle.pem"; \
+	  echo "Usage: make setup-jvm-cas PEM_BUNDLE=/path/to/bundle.pem"; \
 	  exit 1; \
 	fi; \
 	if [ ! -f "$$PEM_BUNDLE_VAL" ]; then \
 	  echo "ERROR: PEM bundle not found: $$PEM_BUNDLE_VAL"; \
 	  exit 1; \
 	fi; \
-	echo "JVM Home: $$JVM_HOME_VAL"; \
+	echo "Using JAVA_HOME: $$JAVA_HOME"; \
 	echo "PEM Bundle: $$PEM_BUNDLE_VAL"; \
 	./dev-tools/setup-jvm-ca-certificates.sh \
 	  --pem "$$PEM_BUNDLE_VAL" \
-	  --jvm "$$JVM_HOME_VAL" \
 	  --alias-prefix corp \
 	  $(if $(VERBOSE),--verbose) \
 	  $(if $(DRY_RUN),--dry-run)

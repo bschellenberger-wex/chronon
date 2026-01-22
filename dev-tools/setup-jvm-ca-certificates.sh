@@ -4,6 +4,7 @@
 #
 # Purpose: Import Zero Trust CA certs (and macOS system CAs) into a target JVM cacerts keystore on macOS.
 # Supports Java 8 (Corretto) paths and generic $JAVA_HOME.
+# When using SDKMAN, --jvm is optional and defaults to $JAVA_HOME set by SDKMAN.
 #
 # This script:
 # - Extracts individual certificates from a PEM bundle
@@ -21,10 +22,20 @@
 #     [--dry-run] \
 #     [--verbose]
 #
-# Example (with macOS system certs):
+# Example (with SDKMAN - recommended):
+#   # 1. Extract macOS system certificates
 #   (security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain && \
 #    security find-certificate -a -p /Library/Keychains/System.keychain) > ~/Documents/certs/allCAbundle.pem
 #
+#   # 2. Ensure SDKMAN Java is active (from .sdkmanrc)
+#   sdk env
+#
+#   # 3. Import certificates (uses $JAVA_HOME from SDKMAN)
+#   ./setup-jvm-ca-certificates.sh \
+#     --pem ~/Documents/certs/allCAbundle.pem \
+#     --alias-prefix corp
+#
+# Example (with explicit JVM path):
 #   ./setup-jvm-ca-certificates.sh \
 #     --pem ~/Documents/certs/allCAbundle.pem \
 #     --jvm "/Users/$USER/Library/Java/JavaVirtualMachines/corretto-1.8.0_462/Contents/Home" \
@@ -57,6 +68,7 @@ REQUIRED:
 
 OPTIONS:
   --jvm <path>              Path to JVM home directory. Defaults to $JAVA_HOME.
+                            When using SDKMAN, this is optional - just run 'sdk env' first.
                             Example: /path/to/corretto-1.8.0_462/Contents/Home
 
   --storepass <password>    Keystore password. Default: changeit
@@ -97,7 +109,9 @@ EXAMPLE (macOS System & Zero Trust CAs):
 
 TROUBLESHOOTING:
   - "Could not find cacerts": Check JVM path. Java 8 uses jre/lib/security/, newer uses lib/security/
-  - "Permission denied": Ensure write access to cacerts and its directory
+  - "Permission denied": With SDKMAN-managed JDKs, this should not occur. For system-managed JDKs,
+                        you may need sudo or to change permissions. SDKMAN JDKs are user-writable.
+  - "JAVA_HOME not set": If using SDKMAN, run 'sdk env' to activate Java from .sdkmanrc
   - "SSLHandshakeException after import": Reload Java process or IDE to pick up new certs
   - Check backup at: cacerts.YYYYMMDD_HHMMSS.bak in the same directory as cacerts
 
@@ -143,19 +157,44 @@ if [[ ! -f "$PEM_BUNDLE" ]]; then
 fi
 
 if [[ -z "$JVM_HOME" ]]; then
-  echo "--jvm not specified and JAVA_HOME not set. Please provide JVM home path." >&2
-  exit 1
+  if [[ -z "$JAVA_HOME" ]]; then
+    echo "ERROR: --jvm not specified and JAVA_HOME not set." >&2
+    echo "" >&2
+    echo "If using SDKMAN, run: sdk env" >&2
+    echo "Otherwise, set JAVA_HOME or use --jvm flag." >&2
+    exit 1
+  fi
+  JVM_HOME="$JAVA_HOME"
+  echo "Using JAVA_HOME: $JVM_HOME"
 fi
 
 # Detect cacerts path (Java 8 vs later)
 CACERTS=""
+CACERTS_DIR=""
 if [[ -f "$JVM_HOME/jre/lib/security/cacerts" ]]; then
+  CACERTS_DIR="$JVM_HOME/jre/lib/security"
   CACERTS="$JVM_HOME/jre/lib/security/cacerts"
 elif [[ -f "$JVM_HOME/lib/security/cacerts" ]]; then
+  CACERTS_DIR="$JVM_HOME/lib/security"
   CACERTS="$JVM_HOME/lib/security/cacerts"
 else
   echo "Could not find cacerts under $JVM_HOME. Checked jre/lib/security and lib/security." >&2
   exit 1
+fi
+
+# Check writability (SDKMAN-managed JDKs should be writable)
+if [[ ! -w "$CACERTS_DIR" ]]; then
+  echo "WARNING: Directory $CACERTS_DIR is not writable." >&2
+  echo "If using SDKMAN, this should not happen. Check your SDKMAN installation." >&2
+  echo "For system-managed JDKs, you may need to use sudo or change permissions." >&2
+  if [[ $DRY_RUN -eq 0 ]]; then
+    echo "" >&2
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      exit 1
+    fi
+  fi
 fi
 
 echo "Using JVM home: $JVM_HOME"

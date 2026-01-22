@@ -1,14 +1,13 @@
 # Building Chronon at WEX
 
 * [Prerequisites](#prerequisites)
-* [Building with Bazel](#building-with-bazel)
-    * [Selecting Java Version](#selecting-java-version)
-    * [VPN and Java Keystore](#vpn-and-java-keystore)
-    * [Building for a specific Spark version](#building-for-a-specific-spark-version)
-    * [Building the Spark JAR](#building-the-spark-jar)
-    * [Uploading Artifacts to S3](#uploading-artifacts-to-s3)
-    * [Available Spark Versions](#available-spark-versions)
-* [Building Other Artifacts](#building-other-artifacts)
+* [Java Setup with SDKMAN](#java-setup-with-sdkman)
+* [VPN and Java Keystore](#vpn-and-java-keystore)
+* [Building with SBT](#building-with-sbt)
+    * [Building All JARs](#building-all-jars)
+    * [Building Specific JARs](#building-specific-jars)
+    * [Building with or without Tests](#building-with-or-without-tests)
+* [Artifact Preparation and Publishing](#artifact-preparation-and-publishing)
 * [Docker](#docker)
     * [Prerequisites for Docker Builds](#prerequisites-for-docker-builds)
     * [Building the Main Chronon Docker Image](#building-the-main-chronon-docker-image)
@@ -20,119 +19,256 @@
 * [Continuous Integration and Deployment (CI/CD)](#continuous-integration-and-deployment-cicd)
     * [GitHub Actions Workflows](#github-actions-workflows)
     * [Local Development: Building and Testing Docker Images](#local-development-building-and-testing-docker-images)
-* [SBT Build (Not Recommended)](#sbt-build-not-recommended)
 
-This document outlines the process for building Chronon artifacts at WEX. Due to specific version requirements for Spark, it's necessary to build Chronon from source to ensure compatibility.
+This document outlines the process for building Chronon artifacts at WEX. The project uses **SBT** as the build system and requires **Java 1.8** for compilation. Due to specific version requirements for Spark, it's necessary to build Chronon from source to ensure compatibility.
+
+> **Note**: This project migrated from Bazel to SBT. For migration context, see [MIGRATION_TO_SBT.md](MIGRATION_TO_SBT.md).
 
 ## Prerequisites
 
-- **Install Thrift v0.13**: Thrift v0.13 is required for both Linux and macOS builds. For macOS, it is recommended to use Homebrew as the build scripts have been adjusted for it. Please see `devnotes.md` for specific commands.
-- **Install Bazelisk**: Install Bazelisk, a user-friendly launcher for Bazel.
-  ```shell
-  brew install bazelisk
+- **Install SDKMAN**: SDKMAN is required for managing Java versions. Install it following the [official instructions](https://sdkman.io/install):
+  ```bash
+  curl -s "https://get.sdkman.io" | bash
+  source "$HOME/.sdkman/bin/sdkman-init.sh"
   ```
-- Java Development Kit (JDK) is installed.
-- Python is installed.
 
-## Building with Bazel
+- **Install Thrift v0.13**: Thrift v0.13 is required for both Linux and macOS builds. For macOS, it is recommended to use Homebrew as the build scripts have been adjusted for it. Please see `devnotes.md` for specific commands.
 
-The Bazel build system is configured to produce versioned artifacts that include the Spark and Scala versions in the name. This is the recommended way to build Chronon. Spark versions are generally binary compatible within minor versions. For example, a build for a `3.5.x` version of Spark is compatible with all other `3.5.x` versions, a build for `3.4.x` is compatible with all other `3.4.x` versions, and so on.
+- **Python**: Python is installed (required for Python API builds).
 
-We provide helper scripts to simplify building and publishing Chronon artifacts. These scripts ensure that your JARs are versioned with the Chronon, Spark, and Scala versions for traceability and compatibility.
+## Java Setup with SDKMAN
 
-### Selecting Java Version
+This project requires **Java 1.8** for building. SDKMAN is used to ensure consistent Java version management across all developers.
 
-You can specify the Java version for the compilation by using the appropriate `--config` flag. For example, to build with Java 11, you would use `--config java_11`.
+### Initial Setup
 
-It's important to note that Bazel manages its own JDK toolchains for compilation. This means that even if you are running Bazel with a newer JDK (e.g., your `$JAVA_HOME` is set to Java 21), you can still compile Chronon against an older version like Java 11 by using the corresponding flag.
+1. **Install the required Java version**:
+   ```bash
+   sdk env install
+   ```
+   This reads `.sdkmanrc` and installs the specified Java version (8.482.08.1-amzn).
 
-### VPN and Java Keystore
+2. **Activate the Java version**:
+   ```bash
+   sdk env
+   ```
+   This sets `JAVA_HOME` to the correct Java installation.
 
-If you are behind a VPN, you may need to add the root CA to the Java keystore of the JDK that Bazel uses to run. You can point Bazel to this JDK by setting the `--server_javabase` flag.
+3. **Verify the setup**:
+   ```bash
+   java -version
+   # Should show: openjdk version "1.8.0_482" (or similar)
+   
+   echo $JAVA_HOME
+   # Should point to the SDKMAN Java installation
+   ```
 
-The following command shows how to run Bazel with a Java 21 JDK, but compile the code using the Java 11 toolchain:
+### Pro-Tip: Automatic Java Version Switching
 
-```bash
-bazel --server_javabase=$JAVA_HOME build --config java_11 --config scala_2.12 --config spark_3.5 //spark:spark-assembly_deploy.jar
-```
-
-### Building for a specific Spark version
-
-To build Chronon for a specific Spark version, you need to use the appropriate build flags. For example, to build for Spark 3.5, you would use the `--config spark_3.5` flag.
-
-The following command will build the `spark-assembly` target for Spark 3.5 with Scala 2.12 and the Java 11 toolchain:
-
-```bash
-bazel build --config java_11 --config scala_2.12 --config spark_3.5 //spark:spark-assembly_deploy.jar
-```
-
-### Building the Spark JAR
-
-Use the provided script to build the Spark JAR with Bazel and produce a versioned artifact:
+SDKMAN can automatically switch Java versions when you enter the project directory. Enable this feature by adding to your `~/.sdkman/etc/config`:
 
 ```bash
-./build_spark_jar.sh
+sdkman_auto_env=true
 ```
 
-This will output a JAR named like:
+With this enabled, SDKMAN will automatically run `sdk env` when you `cd` into the project directory, ensuring you're always using the correct Java version specified in `.sdkmanrc`.
 
-```
-chronon-spark-assembly_<CHRONON_VERSION>_spark<SPARK_VERSION>_scala<SCALA_VERSION>.jar
+**Note**: This requires SDKMAN to be initialized in your shell (add to `~/.zshrc` or `~/.bashrc`):
+```bash
+export SDKMAN_DIR="$HOME/.sdkman"
+[[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
 ```
 
-You can override the Spark, Scala, or Java version by setting environment variables before running the script:
+### Verifying Java Setup
+
+The Makefile includes a pre-flight check to verify your Java environment:
 
 ```bash
-SPARK_VERSION_OVERRIDE=3.5 SCALA_VERSION_OVERRIDE=2.12 JAVA_CONFIG_OVERRIDE=java_11 ./build_spark_jar.sh
+make check-java
+```
+
+This will:
+- Verify `JAVA_HOME` is set
+- Check that the Java version matches what's specified in `.sdkmanrc`
+- Provide helpful error messages if something is wrong
+
+## VPN and Java Keystore (Optional - Only if Needed)
+
+> **Note**: This section is only required if you encounter SSL/TLS certificate errors during builds. If your builds work without this setup, you can skip this section.
+
+If you are behind a VPN or using Zero Trust networking, you may need to add the root CA certificates to the Java keystore (cacerts) of your JDK. This is required for Java applications to trust SSL/TLS connections through corporate proxies or VPN infrastructure.
+
+**When is this needed?**
+- You're behind a corporate VPN that intercepts SSL/TLS connections
+- You're using corporate/private Maven repositories (e.g., Artifactory) that require corporate CA certificates
+- You see SSL/TLS errors during SBT builds: `javax.net.ssl.SSLHandshakeException: PKIX path building failed`
+- Your build fails when downloading dependencies with certificate validation errors
+
+**When is this NOT needed?**
+- You're using public Maven repositories (Maven Central) without VPN
+- Your builds complete successfully without certificate errors
+- You're not behind a corporate proxy or Zero Trust network
+
+If you're unsure, try building first. Only set up certificates if you encounter SSL/TLS errors.
+
+### Setting Up Zero Trust CA Certificates
+
+Use the provided Makefile target to import CA certificates into your JVM. The target uses `JAVA_HOME` from SDKMAN, so you only need to provide the PEM bundle path.
+
+```bash
+# 1. Extract macOS system certificates to a PEM bundle
+mkdir -p ~/certs
+(security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain && \
+ security find-certificate -a -p /Library/Keychains/System.keychain) > ~/certs/bundle.pem
+
+# 2. Ensure SDKMAN Java is active
+sdk env
+
+# 3. Test with dry-run to preview what will be imported
+make setup-jvm-cas \
+  PEM_BUNDLE="$HOME/certs/bundle.pem" \
+  DRY_RUN=1
+
+# 4. Import certificates into the JVM keystore
+make setup-jvm-cas \
+  PEM_BUNDLE="$HOME/certs/bundle.pem"
+
+# 5. Verify import
+keytool -list -keystore "$JAVA_HOME/jre/lib/security/cacerts" \
+  -storepass changeit | grep corp-
+```
+
+**Key Points:**
+- **Only PEM_BUNDLE is required** - The Makefile uses `JAVA_HOME` from SDKMAN automatically
+- The script automatically backs up your cacerts file before making changes
+- Certificates are imported with the `corp-` alias prefix for easy identification
+- Re-running the command is safe - duplicate certificates are automatically skipped
+- With SDKMAN-managed JDKs, sudo is typically not required (JDKs are user-writable)
+- Optional flags: Add `VERBOSE=1` for detailed output or `DRY_RUN=1` to preview changes
+
+**Troubleshooting**: 
+- **Try building first** - Run `make build SKIP_TESTS=true` before setting up certificates.
+- **Only configure certificates if you see SSL/TLS errors** - If your build fails with `javax.net.ssl.SSLHandshakeException` or `PKIX path building failed`, then follow the certificate setup steps above.
+- **Common scenario**: If you're using public repositories (Maven Central) and not behind a corporate VPN, you likely don't need this setup.
+
+For more detailed information, see [docs/zero-trust-ca-setup.md](docs/zero-trust-ca-setup.md).
+
+## Building with SBT
+
+The project uses **SBT** (Simple Build Tool) for building all JAR artifacts. The build system is configured to:
+- Use **Spark 3.5.5** (`use_spark_3_5 := true`)
+- Use **Scala 2.12** as the default
+- Compile with **Java 1.8** bytecode (enforced via SDKMAN)
+
+> **Note**: If you encounter SSL/TLS certificate errors during builds (especially when downloading dependencies), see the [VPN and Java Keystore](#vpn-and-java-keystore-optional---only-if-needed) section above. Most developers using public repositories don't need certificate setup.
+
+### Building All JARs
+
+To build all JAR targets (spark-assembly and aws-online):
+
+```bash
+# Build all JARs with tests
+make build
+
+# Build all JARs without tests (faster)
+make build SKIP_TESTS=true
+```
+
+This will build:
+- `spark_uber` project → `spark-assembly` JAR
+- `aws_online` project → `aws-online` JARs (slim, EMR, and shaded variants)
+
+Built JARs are placed in `build/jars/` (or `$CHRONON_BUILD_DIR/jars/` if set).
+
+### Building Specific JARs
+
+To build only specific JARs:
+
+```bash
+# Build only spark-assembly JAR
+make build-spark-assembly
+
+# Build only spark-assembly without tests
+make build-spark-assembly SKIP_TESTS=true
+
+# Build only aws-online JARs
+make build-aws-online
+
+# Build only aws-online without tests
+make build-aws-online SKIP_TESTS=true
+```
+
+### Building with or without Tests
+
+Tests can be very slow, so you may want to skip them during development:
+
+```bash
+# With tests (default)
+make build
+
+# Without tests (faster)
+make build SKIP_TESTS=true
+
+# Specific JAR without tests
+make build-spark-assembly SKIP_TESTS=true
+```
+
+**Note**: The `spark_uber` project tests are skipped by default in the build script (they're run in CI/CD in the OSS repo). The `aws_online` project tests run by default unless `SKIP_TESTS=true` is set.
+
+### Build Output Locations
+
+- **Default location**: `build/jars/`
+- **Custom location**: Set `CHRONON_BUILD_DIR` environment variable
+- **JAR naming**:
+  - Spark: `spark_uber-assembly-<version>.jar`
+  - AWS Online: `aws-online_2.12-<version>.jar`, `aws-online-emr-assembly-<version>.jar`, `aws-online-shaded-assembly-<version>.jar`
+
+## Artifact Preparation and Publishing
+
+After building JARs, you can prepare them for Maven publishing:
+
+```bash
+# Prepare all artifacts for publishing
+make prepare-artifacts
+
+# Force rebuild before preparing
+make prepare-artifacts FORCE_REBUILD=true
+```
+
+This will:
+- Build JARs if they don't exist (or if `FORCE_REBUILD=true`)
+- Create Maven artifacts (JAR, POM, SHA256) in `chronon-artifacts/`
+- Generate an artifact manifest (`ARTIFACT_MANIFEST.ini`)
+
+### Listing Available JAR Targets
+
+To see what JAR targets are available:
+
+```bash
+make list-jars
 ```
 
 ### Uploading Artifacts to S3
 
-To upload the most recent versioned Spark JAR to S3, use the provided script:
+To upload the Spark JAR to S3:
 
 ```bash
-./push_spark_jar_to_s3.sh [dev|stage|prod]
+make deploy-spark-jar-s3 S3_BUCKET=your-bucket-name
 ```
 
-- The default environment is `dev`.
-- The JAR will be uploaded to:
-  - `s3://ai-chronon-emr-serverless-resources-<env>/chronon-driver-jars/`
-
-**Make sure you are logged into the appropriate AWS environment (e.g., using `aws sso login` or setting the correct AWS profile) before running the upload script.**
-
-Example:
+To upload the AWS Online EMR JAR:
 
 ```bash
-./push_spark_jar_to_s3.sh stage
+make deploy-aws-online-jar-s3 S3_BUCKET=your-bucket-name
 ```
 
-This will upload to the `stage` bucket. The script will print the S3 path of the uploaded artifact.
+To upload all JARs:
 
-### Available Spark Versions
+```bash
+make deploy-all-jars-s3 S3_BUCKET=your-bucket-name
+```
 
-The available Spark versions are defined in `jvm/spark_repos.bzl`. You can check this file to see the available versions and their corresponding build flags.
-
-## Building Other Artifacts
-
-Besides the Spark uber JAR, you may need to build other Chronon artifacts. The `devnotes.md` file contains a comprehensive list of build targets and commands.
-
-Here are some common examples:
-
-- **Build all targets:**
-  ```bash
-  bazel build //...
-  ```
-
-- **Build a specific module:**
-  ```bash
-  # Build the aggregator module
-  bazel build //aggregator:aggregator
-
-  # Build the online module
-  bazel build //online:online
-  ```
-
-For more detailed information on building, testing, and dependency management, please refer to the [devnotes.md](devnotes.md) file.
+**Make sure you are logged into the appropriate AWS environment** (e.g., using `aws sso login` or setting the correct AWS profile) before running the upload commands.
 
 ## Docker
 
@@ -271,6 +407,12 @@ Chronon now uses GitHub Actions workflows to build and publish Docker images for
   - Uses a matrix strategy to publish to multiple AWS accounts and regions (dev, stage, prod; us-east-1, us-west-2).
   - Uses semantic version tags from the `VERSION.emr-spark` file.
 
+- **Build and Publish JARs:**
+  - Workflow: `.github/workflows/build.yml`
+  - Builds all JARs using SBT via `make build`
+  - Prepares artifacts and publishes to Artifactory
+  - Uses semantic version tags
+
 - **Versioning:**
   - Only strict semantic version tags (e.g., `0.0.1`) are allowed for pushes. SNAPSHOT tags are blocked.
   - The workflows prevent overwriting existing tags in Artifactory and ECR.
@@ -287,9 +429,3 @@ Chronon now uses GitHub Actions workflows to build and publish Docker images for
   ```bash
   make image-package
   ```
-
-## SBT Build (Not Recommended)
-
-While the Chronon project also includes support for SBT, it is **not recommended** for use at WEX at this time. The SBT build process has limitations in how it handles Spark versions and produces artifacts with names that can be ambiguous.
-
-For consistency and to ensure you are building against the correct Spark version, please use the Bazel build instructions outlined in this document.
