@@ -19,7 +19,8 @@ $(error VERSION.emr-spark file must exist and contain a version string (e.g., 0.
 endif
 EMR_SPARK_TAG ?= $(EMR_SPARK_VERSION)
 
-.PHONY: lint image-package image-push local-run docker-shell compose-up print-image-info build test prepare-artifacts list-jars promote-artifacts promote-to-subprod promote-to-prod scan-main-app scan-emr-spark scan-all clean-scan-results clean
+.PHONY: lint image-package image-push local-run docker-shell compose-up print-image-info build test prepare-artifacts list-jars promote-artifacts promote-to-subprod promote-to-prod scan-main-app scan-emr-spark scan-all clean-scan-results clean setup-jvm-cas
+
 lint:
 	echo "👕 lint"
 	black src
@@ -627,3 +628,49 @@ clean:
 	fi
 	@echo "✅ Clean complete!"
 
+# Setup JVM CA Certificates
+# Imports Zero Trust CA certificates into the JVM keystore for build configuration.
+# Supports Java 8+ (auto-detects cacerts location).
+# See: docs/zero-trust-ca-setup.md for complete documentation.
+#
+# REQUIRED PARAMETERS:
+#   JVM_HOME=/path/to/java/home    Path to the JVM to configure
+#   PEM_BUNDLE=/path/to/bundle.pem Path to the PEM certificate bundle
+#
+# OPTIONAL PARAMETERS:
+#   VERBOSE=1   Show detailed output
+#   DRY_RUN=1   Preview changes without modifying cacerts
+#
+# Examples:
+#   make setup-jvm-cas JVM_HOME=/path/to/java/home PEM_BUNDLE=~/certs/bundle.pem
+#   make setup-jvm-cas JVM_HOME=/path/to/java/home PEM_BUNDLE=~/certs/bundle.pem DRY_RUN=1
+#   make setup-jvm-cas JVM_HOME=/path/to/java/home PEM_BUNDLE=~/certs/bundle.pem VERBOSE=1
+#
+.PHONY: setup-jvm-cas
+setup-jvm-cas:
+	@echo "Setting up Zero Trust JVM CA certificates..."
+	@set -euo pipefail; \
+	JVM_HOME_VAL="${JVM_HOME}"; \
+	PEM_BUNDLE_VAL="${PEM_BUNDLE}"; \
+	if [ -z "$$JVM_HOME_VAL" ]; then \
+	  echo "ERROR: JVM_HOME is required."; \
+	  echo "Usage: make setup-jvm-cas JVM_HOME=/path/to/java/home PEM_BUNDLE=/path/to/bundle.pem"; \
+	  exit 1; \
+	fi; \
+	if [ -z "$$PEM_BUNDLE_VAL" ]; then \
+	  echo "ERROR: PEM_BUNDLE is required."; \
+	  echo "Usage: make setup-jvm-cas JVM_HOME=/path/to/java/home PEM_BUNDLE=/path/to/bundle.pem"; \
+	  exit 1; \
+	fi; \
+	if [ ! -f "$$PEM_BUNDLE_VAL" ]; then \
+	  echo "ERROR: PEM bundle not found: $$PEM_BUNDLE_VAL"; \
+	  exit 1; \
+	fi; \
+	echo "JVM Home: $$JVM_HOME_VAL"; \
+	echo "PEM Bundle: $$PEM_BUNDLE_VAL"; \
+	./dev-tools/setup-jvm-ca-certificates.sh \
+	  --pem "$$PEM_BUNDLE_VAL" \
+	  --jvm "$$JVM_HOME_VAL" \
+	  --alias-prefix corp \
+	  $(if $(VERBOSE),--verbose) \
+	  $(if $(DRY_RUN),--dry-run)
